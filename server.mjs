@@ -859,9 +859,10 @@ async function handleChat(req, res, owner = '', session = null) {
   if (!query && !(lastUser?.images?.length)) return sendJson(res, 400, { error: '请输入问题' });
 
   const manageCmd = query.trim();
+  const isTempCode = manageCmd === '临时111';
   const isManageDelete = /^\/manage删除\s*[+＋]?\s*(\d{6})$/.test(manageCmd);
   const isMasterViewCode = /^\d{6}$/.test(manageCmd) && session?.role === 'master';
-  if (manageCmd === '/manage' || manageCmd === '/manage1' || isManageDelete || isMasterViewCode) {
+  if (manageCmd === '/manage' || manageCmd === '/manage1' || isTempCode || isManageDelete || isMasterViewCode) {
     res.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache, no-transform',
@@ -896,14 +897,18 @@ async function handleChat(req, res, owner = '', session = null) {
         : `密码 ${code} 不存在，或已经用完作废。`;
     } else {
       const selfKey = manageCmd === '/manage1';
-      const limit = selfKey ? 500 : 260;
+      const limit = isTempCode ? 25 : selfKey ? 500 : 260;
       let code;
       do { code = String(crypto.randomInt(100000, 1000000)); } while (guestCodes.has(code));
       guestCodes.set(code, { remaining: limit, limit, activeSid: null, createdAt: nowMs(), usesOwnerKey: !selfKey });
       saveGuestCodes();
-      answer = selfKey
-        ? `已生成新的答疑密码：${code}\n\n剩余答疑次数：500 次\n这个密码必须由使用者填写自己的 DeepSeek API Key，不能使用站长额度。\n使用规则：长期有效，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。`
-        : `已生成新的答疑密码：${code}\n\n剩余答疑次数：260 次\n使用规则：这个密码长期有效，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。\n\n把密码发给对方即可，不要再公开发到群里。`;
+      if (isTempCode) {
+        answer = `已生成临时答疑密码：${code}\n\n剩余答疑次数：25 次\n类型：站长 DeepSeek 额度\n使用规则：单次临时密码，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。`;
+      } else if (selfKey) {
+        answer = `已生成新的答疑密码：${code}\n\n剩余答疑次数：500 次\n这个密码必须由使用者填写自己的 DeepSeek API Key，不能使用站长额度。\n使用规则：长期有效，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。`;
+      } else {
+        answer = `已生成新的答疑密码：${code}\n\n剩余答疑次数：260 次\n使用规则：这个密码长期有效，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。\n\n把密码发给对方即可，不要再公开发到群里。`;
+      }
     }
     send('meta', { sources: [], model: MODEL, peers: [], quota: session?.role === 'guest' ? guestQuota(session) : null, manage: true });
     send('delta', { text: answer });
