@@ -11,6 +11,7 @@ const PUBLIC = path.join(ROOT, 'public');
 const DATA = path.join(ROOT, 'data');
 const KB_FILE = path.join(DATA, 'kb.jsonl');
 const UPLOAD_FILE = path.join(DATA, 'uploads.jsonl');
+const GUEST_FILE = path.join(DATA, 'guest_codes.json');
 const CRED_FILE = 'C:/Users/39713/.dsh/.credentials.yaml';
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -23,6 +24,24 @@ const SESSION_TTL = 7 * 86400 * 1000;
 const SESSION_COOKIE = 'sage_session';
 const CLIENT_COOKIE = 'sage_client';
 const CLIENT_TTL = 365 * 86400 * 1000;
+const sessions = new Map();
+let guestCodes = new Map();
+try {
+  const raw = JSON.parse(fs.readFileSync(GUEST_FILE, 'utf8'));
+  guestCodes = new Map(Object.entries(raw || {}));
+} catch { /* first run */ }
+function saveGuestCodes() {
+  try {
+    fs.mkdirSync(DATA, { recursive: true });
+    const obj = Object.fromEntries(guestCodes);
+    fs.writeFileSync(GUEST_FILE, JSON.stringify(obj, null, 2), 'utf8');
+  } catch (e) { console.error('save guest codes', e); }
+}
+function guestQuota(session) {
+  if (!session || session.role !== 'guest') return null;
+  const rec = guestCodes.get(session.code);
+  return rec ? Math.max(0, Number(rec.remaining) || 0) : 0;
+}
 const rateBuckets = new Map();
 
 const nowMs = () => Date.now();
@@ -57,16 +76,23 @@ function sessionInfo(req) {
   const a = Buffer.from(sig);
   const b = Buffer.from(want);
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
-  return { id: sid };
+  const stored = sessions.get(sid);
+  if (!stored || stored.expires < nowMs()) return null;
+  return { id: sid, ...stored };
 }
-function setSessionCookie(req, res) {
+function createSession(req, res, data) {
   const sid = crypto.randomBytes(18).toString('base64url');
   const exp = nowMs() + SESSION_TTL;
-  const data = `${sid}.${exp}`;
-  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
+  const info = { ...data, expires: exp };
+  sessions.set(sid, info);
+  const raw = `${sid}.${exp}`;
+  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(raw).digest('base64url');
   const secure = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(`${data}.${sig}`)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL / 1000)}${secure ? '; Secure' : ''}`);
-  return sid;
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(`${raw}.${sig}`)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL / 1000)}${secure ? '; Secure' : ''}`);
+  return { sid, info };
+}
+function setSessionCookie(req, res) {
+  return createSession(req, res, { role: 'master' }).sid;
 }
 function clearSession(res) {
   res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
@@ -102,7 +128,7 @@ function redirect(res, to) {
   res.end();
 }
 function loginPage() {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>访问验证 · Sage 答疑平台</title><style>
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>访问验证 · Sage 答疑服务</title><style>
   :root{--ink:#22303f;--muted:#72849a;--line:#d7e1eb;--paper:#eef3f8;--sage:#3f5f82}
   *{box-sizing:border-box}body{margin:0;min-height:100dvh;display:grid;place-items:center;background:radial-gradient(circle at 20% 10%,#fff,#e9f0f7 60%,#e2ebf4);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;color:var(--ink);padding:20px}
   .card{width:min(380px,100%);background:rgba(255,255,255,.86);border:1px solid rgba(215,225,235,.9);border-radius:18px;padding:30px 28px 24px;box-shadow:0 24px 70px rgba(42,65,88,.15);text-align:center;backdrop-filter:blur(10px)}
@@ -111,8 +137,9 @@ function loginPage() {
   input:focus{border-color:#8ba6c2;box-shadow:0 0 0 3px rgba(63,95,130,.09)}
   button{width:100%;height:44px;margin-top:10px;border:0;border-radius:10px;background:var(--sage);color:#fff;font-size:14px;font-weight:600;cursor:pointer}button:disabled{opacity:.55}
   .err{min-height:18px;color:#a95b5b;font-size:11.5px;margin:8px 0 0}.fine{font-size:10px;color:#9aa9b8;margin-top:16px;line-height:1.6}
-  </style></head><body><main class="card"><img src="/logo.png" alt="Sage"><h1>Sage 答疑平台</h1><p>这是私人答疑站点，请输入访问密码</p><form id="f"><input id="p" type="password" autocomplete="current-password" placeholder="访问密码" autofocus><button id="b" type="submit">进入</button><div class="err" id="e"></div></form><div class="fine">仅限本人及获授权的人使用<br>请勿把密码和链接转发到公开群</div></main><script>
+  </style></head><body><main class="card"><img src="/logo.png" alt="Sage"><h1>Sage 答疑服务</h1><p>站长输入总密码，访客输入 6 位答疑密码</p><form id="f"><input id="p" type="password" autocomplete="current-password" placeholder="站长密码或 6 位答疑密码" autofocus><button id="b" type="submit">进入</button><div class="err" id="e"></div></form><div class="fine">仅限本人及获授权的人使用<br>请勿把密码和链接转发到公开群</div></main><script>
   const f=document.querySelector('#f'),p=document.querySelector('#p'),b=document.querySelector('#b'),e=document.querySelector('#e');
+  if(new URLSearchParams(location.search).get('kicked')) e.textContent='该密码已在另一台设备登录，本设备已退出';
   f.addEventListener('submit',async(ev)=>{ev.preventDefault();e.textContent='';b.disabled=true;try{const r=await fetch('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:p.value})});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'密码不正确');location.href='/'}catch(err){e.textContent=err.message||'密码不正确';b.disabled=false;p.select()}});
   </script></body></html>`;
 }
@@ -502,15 +529,16 @@ function readAccountToken() {
   } catch { return ''; }
 }
 
-function authHeaders(req) {
+function authHeaders(req, session = null) {
   const userKey = String(req.headers['x-user-api-key'] || '').trim();
   if (userKey) return { 'x-api-key': userKey };
-  if (REQUIRE_USER_KEY) return null;
-  const envKey = String(process.env.DEEPSEEK_API_KEY || '').trim();
-  if (envKey) return { 'x-api-key': envKey };
-  const token = readAccountToken();
-  if (!token) return null;
-  return { 'x-dsh-auth-token': token };
+  if (session && (session.role === 'master' || session.role === 'guest')) {
+    const envKey = String(process.env.DEEPSEEK_API_KEY || '').trim();
+    if (envKey) return { 'x-api-key': envKey };
+    const token = readAccountToken();
+    if (token) return { 'x-dsh-auth-token': token };
+  }
+  return null;
 }
 
 function peerConfig(req) {
@@ -796,7 +824,7 @@ async function extractImageQuestion(auth, images) {
 }
 
 // ---------- chat ----------
-async function handleChat(req, res, owner = '') {
+async function handleChat(req, res, owner = '', session = null) {
   let body;
   try { body = JSON.parse(await readBody(req)); } catch { return sendJson(res, 400, { error: '请求格式错误' }); }
   const convId = String(body.conversationId || '').slice(0, 80);
@@ -807,11 +835,55 @@ async function handleChat(req, res, owner = '') {
   const lastUser = [...history].reverse().find((m) => m && m.role === 'user');
   const query = lastUser ? String(lastUser.content || '') : '';
   if (!query && !(lastUser?.images?.length)) return sendJson(res, 400, { error: '请输入问题' });
+
+  if (query.trim() === '/manage') {
+    res.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    });
+    const send = (event, data) => {
+      if (res.writableEnded) return;
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    let answer;
+    if (!session || session.role !== 'master') {
+      answer = '只有站长密码登录后，才能生成新的答疑密码。';
+    } else {
+      let code;
+      do { code = String(crypto.randomInt(100000, 1000000)); } while (guestCodes.has(code));
+      guestCodes.set(code, { remaining: 260, activeSid: null, createdAt: nowMs() });
+      saveGuestCodes();
+      answer = `已生成新的答疑密码：${code}\n\n剩余答疑次数：260 次\n使用规则：这个密码长期有效，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。\n\n把密码发给对方即可，不要再公开发到群里。`;
+    }
+    send('meta', { sources: [], model: MODEL, peers: [], quota: session?.role === 'guest' ? guestQuota(session) : null, manage: true });
+    send('delta', { text: answer });
+    send('final', { text: answer });
+    send('done', {});
+    res.end();
+    return;
+  }
+
+  let auth = authHeaders(req, session);
+  if (!auth) return sendJson(res, 401, { error: '站长授权额度不可用，请联系站长或填写自己的 DeepSeek API Key' });
   const hasImages = !!(lastUser?.images?.length);
-  let auth = authHeaders(req);
-  if (!auth) return sendJson(res, 401, { error: '未找到 DeepSeek 凭据，请在设置中填写 DeepSeek API Key' });
   const peersCfg = peerConfig(req);
   const peers = hasImages ? [] : peersCfg.list;
+
+  let quota = session?.role === 'guest' ? guestQuota(session) : null;
+  if (session?.role === 'guest') {
+    const rec = guestCodes.get(session.code);
+    if (!rec || rec.activeSid !== session.id) return sendJson(res, 401, { error: '该密码已在另一台设备登录，本设备已退出' });
+    if (Number(rec.remaining) <= 0) return sendJson(res, 403, { error: '这个密码的 260 次答疑已用完' });
+    const skip = String(req.headers['x-quota-skip'] || '') === '1';
+    if (!skip) {
+      rec.remaining = Math.max(0, Number(rec.remaining) - 1);
+      guestCodes.set(session.code, rec);
+      saveGuestCodes();
+      quota = rec.remaining;
+    }
+  }
 
   // 图片题先做一次“只识别题目”的预检，再拿识别文本去检索教材，最后才作答。
   const visionText = hasImages ? await extractImageQuestion(auth, lastUser.images) : '';
@@ -868,7 +940,7 @@ async function handleChat(req, res, owner = '') {
     if (res.writableEnded) return;
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
-  send('meta', { sources: [], model: MODEL, peers: peers.map((p) => ({ id: p.id, label: p.label, status: 'pending' })) });
+  send('meta', { sources: [], model: MODEL, peers: peers.map((p) => ({ id: p.id, label: p.label, status: 'pending' })), quota });
 
   const peerDone = new Set();
   const peerTasks = peers.map((peer) => (async () => {
@@ -1034,7 +1106,7 @@ function applySecurityHeaders(res) {
 }
 
 function adminPage() {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>管理面板 · Sage 答疑平台</title><style>
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>管理面板 · Sage 答疑服务</title><style>
   :root{--ink:#22303f;--muted:#72849a;--line:#d7e1eb;--sage:#3f5f82}
   *{box-sizing:border-box}body{margin:0;background:#eef3f8;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;padding:28px}
   .wrap{max-width:880px;margin:0 auto}.top{display:flex;align-items:center;gap:12px;margin-bottom:18px}.top img{width:44px;height:44px;object-fit:contain}
@@ -1044,7 +1116,7 @@ function adminPage() {
   .panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:12px;font-size:12.5px;line-height:1.9}
   .panel h2{font-size:13px;margin:0 0 8px;color:var(--sage)}a{color:var(--sage)}code{background:#eef3f8;padding:1px 5px;border-radius:4px;font-size:11px}
   .pill{display:inline-block;font-size:10px;background:#e8f0f8;color:var(--sage);border-radius:99px;padding:2px 8px;margin-left:6px}
-  </style></head><body><div class="wrap"><div class="top"><img src="/logo.png" alt=""><div><h1>管理面板</h1><div class="sub">Sage 答疑平台 · 仅访问密码持有者可见</div></div></div>
+  </style></head><body><div class="wrap"><div class="top"><img src="/logo.png" alt=""><div><h1>管理面板</h1><div class="sub">Sage 答疑服务 · 仅访问密码持有者可见</div></div></div>
   <div class="grid" id="cards"></div>
   <div class="panel"><h2>服务控制</h2>
   <div>公网入口：<code>https://sage-qa.onrender.com</code>（HTTPS 443）</div>
@@ -1078,23 +1150,48 @@ const server = http.createServer(async (req, res) => {
       if (!ACCESS_PASSWORD) return sendJson(res, 400, { error: '未设置访问密码' });
       let body;
       try { body = JSON.parse(await readBody(req, 4096)); } catch { return sendJson(res, 400, { error: '请求格式错误' }); }
-      if (!passwordOk(body.password)) return sendJson(res, 401, { error: '密码不正确' });
-      setSessionCookie(req, res);
-      return sendJson(res, 200, { ok: true });
+      const input = String(body.password || '').trim();
+      if (passwordOk(input)) {
+        createSession(req, res, { role: 'master' });
+        return sendJson(res, 200, { ok: true, role: 'master', quota: null });
+      }
+      if (/^\d{6}$/.test(input) && guestCodes.has(input)) {
+        const rec = guestCodes.get(input);
+        if (!rec || Number(rec.remaining) <= 0) return sendJson(res, 403, { error: '这个密码的答疑次数已用完' });
+        if (rec.activeSid) sessions.delete(rec.activeSid);
+        const created = createSession(req, res, { role: 'guest', code: input });
+        rec.activeSid = created.sid;
+        rec.lastLogin = nowMs();
+        guestCodes.set(input, rec);
+        saveGuestCodes();
+        return sendJson(res, 200, { ok: true, role: 'guest', quota: Number(rec.remaining) });
+      }
+      return sendJson(res, 401, { error: '密码不正确' });
     }
     if (p === '/api/logout' && req.method === 'POST') {
+      const cur = sessionInfo(req);
+      if (cur) sessions.delete(cur.id);
       clearSession(res);
       return sendJson(res, 200, { ok: true });
     }
     if (p === '/api/health') {
-      const auth = authHeaders(req);
+      const session = sessionInfo(req);
+      const auth = authHeaders(req, session);
       const pages = new Set(docs.map((d) => `${d.source}|${d.page}`)).size;
       return sendJson(res, 200, {
         ok: !!auth, docs: docs.length, pages, model: MODEL,
-        requireUserKey: REQUIRE_USER_KEY, accessGate: !!ACCESS_PASSWORD,
+        requireUserKey: false, accessGate: !!ACCESS_PASSWORD,
+        role: session?.role || null,
+        quota: session?.role === 'guest' ? guestQuota(session) : null,
         subjects: SUBJECTS.reduce((a, s) => (a[s] = docs.filter((d) => d.subject === s).length, a), {}),
-        uploads: listUploads(sessionInfo(req)?.id || '').length,
+        uploads: listUploads('').length,
       });
+    }
+
+    if (p === '/api/session' && req.method === 'GET') {
+      const session = sessionInfo(req);
+      if (!session) return sendJson(res, 401, { error: '需要登录' });
+      return sendJson(res, 200, { ok: true, role: session.role, quota: session.role === 'guest' ? guestQuota(session) : null });
     }
 
     const info = sessionInfo(req);
@@ -1116,13 +1213,15 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true, docs: docs.length, pages, model: MODEL,
         uploads: listUploads(owner).length, accessGate: !!ACCESS_PASSWORD,
-        requireUserKey: REQUIRE_USER_KEY, owner: owner ? owner.slice(0, 8) + '…' : '',
+        requireUserKey: false, role: info?.role || null,
+        quota: info?.role === 'guest' ? guestQuota(info) : null,
+        owner: owner ? owner.slice(0, 8) + '…' : '',
         uptime: Math.round(process.uptime()), node: process.version, env: process.env.NODE_ENV || 'production',
       });
     }
     if (p === '/api/chat' && req.method === 'POST') {
       if (!rateLimit('chat:' + clientIp(req), 60, 600000)) return sendJson(res, 429, { error: '请求过于频繁，请 10 分钟后再试' });
-      return await handleChat(req, res, owner);
+      return await handleChat(req, res, owner, info);
     }
     if (p === '/api/uploads' && req.method === 'GET') return sendJson(res, 200, { uploads: listUploads(owner) });
     if (p === '/api/uploads' && req.method === 'POST') {
