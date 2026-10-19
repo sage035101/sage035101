@@ -50,7 +50,7 @@ svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.18),0 4px 10px rgba(63,95,130,.18);
   position:relative;overflow:hidden;
 }
-.brand-seal img,.welcome-mark img{width:100%;height:100%;object-fit:contain;display:block;mix-blend-mode:multiply}
+.brand-seal img,.welcome-mark img{width:100%;height:100%;object-fit:contain;display:block}
 .brand-seal.has-logo,.welcome-mark.has-logo{background:transparent;box-shadow:none}
 .brand-seal.has-logo .logo-fallback,.welcome-mark.has-logo .logo-fallback{display:none}
 .logo-fallback{display:grid;place-items:center;width:100%;height:100%}
