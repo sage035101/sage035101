@@ -778,7 +778,7 @@ async function send(opts = {}) {
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
       if (res.status === 401) { location.href = '/login?kicked=1'; }
-      if (res.status === 403 && typeof j.error === 'string' && j.error.includes('次数')) {
+      if (res.status === 403 && typeof j.error === 'string' && /次数|额度|作废/.test(j.error)) {
         state.quota = 0;
         renderQuota();
         openRenew();
