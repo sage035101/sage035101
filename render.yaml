@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: sage-law-qa
+    runtime: node
+    plan: free
+    buildCommand: ""
+    startCommand: node server.mjs
+    healthCheckPath: /api/health
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: DEEPSEEK_ACCOUNT_TOKEN
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
