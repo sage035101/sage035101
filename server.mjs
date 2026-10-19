@@ -83,13 +83,22 @@ function sessionInfo(req) {
 function createSession(req, res, data) {
   const sid = crypto.randomBytes(18).toString('base64url');
   const exp = nowMs() + SESSION_TTL;
-  const info = { ...data, expires: exp };
+  const info = { ...data, createdAt: nowMs(), expires: exp };
   sessions.set(sid, info);
   const raw = `${sid}.${exp}`;
   const sig = crypto.createHmac('sha256', SESSION_SECRET).update(raw).digest('base64url');
   const secure = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
   res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(`${raw}.${sig}`)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL / 1000)}${secure ? '; Secure' : ''}`);
   return { sid, info };
+}
+function trimMasterSessions(max = 5) {
+  const list = [...sessions.entries()]
+    .filter(([, s]) => s.role === 'master' && s.expires > nowMs())
+    .sort((a, b) => (a[1].createdAt || 0) - (b[1].createdAt || 0));
+  while (list.length >= max) {
+    const [sid] = list.shift();
+    sessions.delete(sid);
+  }
 }
 function setSessionCookie(req, res) {
   return createSession(req, res, { role: 'master' }).sid;
@@ -497,7 +506,8 @@ function search(query, subject = '全部', limit = 8, owner = '') {
       const page = p.page + delta;
       const pageKey = `${p.source}|${page}`;
       if (seenPage.has(pageKey) || page < 1) continue;
-      const chunks = docs.filter((d) => d.source === p.source && d.page === page);
+      const chunks = docs.filter((d) => d.source === p.source && d.page === page &&
+        (!d.uploaded || !d.owner || d.owner === owner));
       if (!chunks.length) continue;
       seenPage.add(pageKey);
       additions.push({
@@ -532,6 +542,10 @@ function readAccountToken() {
 function authHeaders(req, session = null) {
   const userKey = String(req.headers['x-user-api-key'] || '').trim();
   if (userKey) return { 'x-api-key': userKey };
+  if (session && session.role === 'guest') {
+    const rec = guestCodes.get(session.code);
+    if (rec && rec.usesOwnerKey === false) return null;
+  }
   if (session && (session.role === 'master' || session.role === 'guest')) {
     const envKey = String(process.env.DEEPSEEK_API_KEY || '').trim();
     if (envKey) return { 'x-api-key': envKey };
@@ -836,7 +850,8 @@ async function handleChat(req, res, owner = '', session = null) {
   const query = lastUser ? String(lastUser.content || '') : '';
   if (!query && !(lastUser?.images?.length)) return sendJson(res, 400, { error: '请输入问题' });
 
-  if (query.trim() === '/manage') {
+  const manageCmd = query.trim();
+  if (manageCmd === '/manage' || manageCmd === '/manage1') {
     res.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache, no-transform',
@@ -851,11 +866,15 @@ async function handleChat(req, res, owner = '', session = null) {
     if (!session || session.role !== 'master') {
       answer = '只有站长密码登录后，才能生成新的答疑密码。';
     } else {
+      const selfKey = manageCmd === '/manage1';
+      const limit = selfKey ? 500 : 260;
       let code;
       do { code = String(crypto.randomInt(100000, 1000000)); } while (guestCodes.has(code));
-      guestCodes.set(code, { remaining: 260, activeSid: null, createdAt: nowMs() });
+      guestCodes.set(code, { remaining: limit, limit, activeSid: null, createdAt: nowMs(), usesOwnerKey: !selfKey });
       saveGuestCodes();
-      answer = `已生成新的答疑密码：${code}\n\n剩余答疑次数：260 次\n使用规则：这个密码长期有效，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。\n\n把密码发给对方即可，不要再公开发到群里。`;
+      answer = selfKey
+        ? `已生成新的答疑密码：${code}\n\n剩余答疑次数：500 次\n这个密码必须由使用者填写自己的 DeepSeek API Key，不能使用站长额度。\n使用规则：长期有效，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。`
+        : `已生成新的答疑密码：${code}\n\n剩余答疑次数：260 次\n使用规则：这个密码长期有效，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。\n\n把密码发给对方即可，不要再公开发到群里。`;
     }
     send('meta', { sources: [], model: MODEL, peers: [], quota: session?.role === 'guest' ? guestQuota(session) : null, manage: true });
     send('delta', { text: answer });
@@ -866,7 +885,13 @@ async function handleChat(req, res, owner = '', session = null) {
   }
 
   let auth = authHeaders(req, session);
-  if (!auth) return sendJson(res, 401, { error: '站长授权额度不可用，请联系站长或填写自己的 DeepSeek API Key' });
+  if (!auth) {
+    const rec = session?.role === 'guest' ? guestCodes.get(session.code) : null;
+    const msg = rec && rec.usesOwnerKey === false
+      ? '这个密码需要使用你自己的 DeepSeek API Key，请到右上角设置填写'
+      : '站长授权额度不可用，请联系站长或填写自己的 DeepSeek API Key';
+    return sendJson(res, 403, { error: msg });
+  }
   const hasImages = !!(lastUser?.images?.length);
   const peersCfg = peerConfig(req);
   const peers = hasImages ? [] : peersCfg.list;
@@ -875,7 +900,7 @@ async function handleChat(req, res, owner = '', session = null) {
   if (session?.role === 'guest') {
     const rec = guestCodes.get(session.code);
     if (!rec || rec.activeSid !== session.id) return sendJson(res, 401, { error: '该密码已在另一台设备登录，本设备已退出' });
-    if (Number(rec.remaining) <= 0) return sendJson(res, 403, { error: '这个密码的 260 次答疑已用完' });
+    if (Number(rec.remaining) <= 0) return sendJson(res, 403, { error: '这个密码的答疑次数已用完' });
     const skip = String(req.headers['x-quota-skip'] || '') === '1';
     if (!skip) {
       rec.remaining = Math.max(0, Number(rec.remaining) - 1);
@@ -1152,6 +1177,7 @@ const server = http.createServer(async (req, res) => {
       try { body = JSON.parse(await readBody(req, 4096)); } catch { return sendJson(res, 400, { error: '请求格式错误' }); }
       const input = String(body.password || '').trim();
       if (passwordOk(input)) {
+        trimMasterSessions(5);
         createSession(req, res, { role: 'master' });
         return sendJson(res, 200, { ok: true, role: 'master', quota: null });
       }
@@ -1159,12 +1185,12 @@ const server = http.createServer(async (req, res) => {
         const rec = guestCodes.get(input);
         if (!rec || Number(rec.remaining) <= 0) return sendJson(res, 403, { error: '这个密码的答疑次数已用完' });
         if (rec.activeSid) sessions.delete(rec.activeSid);
-        const created = createSession(req, res, { role: 'guest', code: input });
+        const created = createSession(req, res, { role: 'guest', code: input, usesOwnerKey: rec.usesOwnerKey !== false });
         rec.activeSid = created.sid;
         rec.lastLogin = nowMs();
         guestCodes.set(input, rec);
         saveGuestCodes();
-        return sendJson(res, 200, { ok: true, role: 'guest', quota: Number(rec.remaining) });
+        return sendJson(res, 200, { ok: true, role: 'guest', quota: Number(rec.remaining), usesOwnerKey: rec.usesOwnerKey !== false });
       }
       return sendJson(res, 401, { error: '密码不正确' });
     }
@@ -1173,6 +1199,30 @@ const server = http.createServer(async (req, res) => {
       if (cur) sessions.delete(cur.id);
       clearSession(res);
       return sendJson(res, 200, { ok: true });
+    }
+    if (p === '/api/renew' && req.method === 'POST') {
+      if (!rateLimit('renew:' + clientIp(req), 10, 600000)) return sendJson(res, 429, { error: '尝试次数过多，请稍后再试' });
+      const cur = sessionInfo(req);
+      if (!cur || cur.role !== 'guest') return sendJson(res, 403, { error: '只有答疑密码登录后才能续用' });
+      let body;
+      try { body = JSON.parse(await readBody(req, 4096)); } catch { return sendJson(res, 400, { error: '请求格式错误' }); }
+      const code = String(body.code || '').trim();
+      if (!/^\d{6}$/.test(code) || !guestCodes.has(code)) return sendJson(res, 401, { error: '新的 6 位密码不正确' });
+      const rec = guestCodes.get(code);
+      if (Number(rec.remaining) <= 0) return sendJson(res, 403, { error: '这个密码的答疑次数也已用完' });
+      const old = guestCodes.get(cur.code);
+      if (old && old.activeSid === cur.id) { old.activeSid = null; guestCodes.set(cur.code, old); }
+      sessions.delete(cur.id);
+      if (rec.activeSid) sessions.delete(rec.activeSid);
+      const created = createSession(req, res, { role: 'guest', code, usesOwnerKey: rec.usesOwnerKey !== false });
+      rec.activeSid = created.sid;
+      rec.lastLogin = nowMs();
+      guestCodes.set(code, rec);
+      saveGuestCodes();
+      return sendJson(res, 200, {
+        ok: true, role: 'guest', quota: Number(rec.remaining),
+        usesOwnerKey: rec.usesOwnerKey !== false,
+      });
     }
     if (p === '/api/health') {
       const session = sessionInfo(req);
@@ -1183,6 +1233,7 @@ const server = http.createServer(async (req, res) => {
         requireUserKey: false, accessGate: !!ACCESS_PASSWORD,
         role: session?.role || null,
         quota: session?.role === 'guest' ? guestQuota(session) : null,
+        usesOwnerKey: session?.role === 'guest' ? (guestCodes.get(session.code)?.usesOwnerKey !== false) : null,
         subjects: SUBJECTS.reduce((a, s) => (a[s] = docs.filter((d) => d.subject === s).length, a), {}),
         uploads: listUploads('').length,
       });
@@ -1191,7 +1242,10 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/session' && req.method === 'GET') {
       const session = sessionInfo(req);
       if (!session) return sendJson(res, 401, { error: '需要登录' });
-      return sendJson(res, 200, { ok: true, role: session.role, quota: session.role === 'guest' ? guestQuota(session) : null });
+      return sendJson(res, 200, {
+        ok: true, role: session.role, quota: session.role === 'guest' ? guestQuota(session) : null,
+        usesOwnerKey: session.role === 'guest' ? (guestCodes.get(session.code)?.usesOwnerKey !== false) : null,
+      });
     }
 
     const info = sessionInfo(req);
@@ -1202,7 +1256,12 @@ const server = http.createServer(async (req, res) => {
       if (p.startsWith('/api/')) return sendJson(res, 401, { error: '需要访问密码' });
       return redirect(res, '/login');
     }
-    const owner = clientInfo(req, res).id;
+    const clientId = clientInfo(req, res).id;
+    const owner = info?.role === 'master'
+      ? `m:${clientId}`
+      : info?.role === 'guest'
+        ? `g:${info.code}:${clientId}`
+        : `a:${clientId}`;
 
     if (p === '/admin') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
