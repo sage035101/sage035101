@@ -699,6 +699,11 @@ async function send() {
   hideVoiceHelp();
   const text = input.value.trim();
   if (!text && !state.pending.length) { input.focus(); return; }
+  if (!state.apiKey) {
+    toast('本站已关闭公共额度，请先在设置填写自己的 DeepSeek API Key');
+    openSettings();
+    return;
+  }
   const hasContext = state.messages.some((m) => m.role === 'assistant' && String(m.text || '').trim());
   const imgs = state.pending.map((p) => p.full);
   const thumbs = state.pending.map((p) => p.thumb);
@@ -971,6 +976,12 @@ async function checkHealth() {
     const headers = state.apiKey ? { 'x-user-api-key': state.apiKey } : {};
     const r = await fetch('/api/health', { headers });
     const j = await r.json();
+    if (j.requireUserKey && !state.apiKey) {
+      status.classList.add('offline');
+      txt.textContent = '需填写自己的 DeepSeek Key';
+      box.innerHTML = `<span class="pulse"></span><span>本站已关闭公共额度：请在上方填写自己的 DeepSeek API Key</span>`;
+      return;
+    }
     if (j.ok) {
       status.classList.remove('offline');
       txt.textContent = 'DeepSeek 在线';
@@ -978,12 +989,12 @@ async function checkHealth() {
     } else {
       status.classList.add('offline');
       txt.textContent = '未连接 DeepSeek';
-      box.innerHTML = `<span class="pulse"></span><span>未找到可用凭据，请在下方填写 API Key</span>`;
+      box.innerHTML = `<span class="pulse"></span><span>未找到可用凭据，请填写自己的 DeepSeek API Key</span>`;
     }
   } catch {
     status.classList.add('offline');
     txt.textContent = '服务未启动';
-    box.innerHTML = `<span class="pulse"></span><span>本地服务未响应</span>`;
+    box.innerHTML = `<span class="pulse"></span><span>服务未响应，请刷新页面</span>`;
   }
 }
 
