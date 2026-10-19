@@ -12,6 +12,11 @@ const state = {
   subject: '全部',
   mode: localStorage.getItem('sage_mode') || 'brief',
   apiKey: localStorage.getItem('sage_key') || '',
+  doubaoKey: localStorage.getItem('sage_doubao_key') || '',
+  qwenKey: localStorage.getItem('sage_qwen_key') || '',
+  doubaoModel: localStorage.getItem('sage_doubao_model') || 'doubao-seed-1-6-250615',
+  qwenModel: localStorage.getItem('sage_qwen_model') || 'qwen-plus',
+  multi: localStorage.getItem('sage_multi') !== '0',
   conversations: [],
   currentId: null,
   messages: [],
@@ -223,6 +228,22 @@ function sourcesHtml(sources) {
   return '';
 }
 
+function peersHtml(peers) {
+  if (!Array.isArray(peers) || !peers.length) return '';
+  const cards = peers.map((p) => {
+    const status = p.status === 'pending' ? '协作中…' : p.status === 'error' ? '调用失败' : '已完成';
+    const body = p.text
+      ? mdToHtml(p.text, [])
+      : `<p class="peer-empty">${esc(p.error || '等待该模型返回…')}</p>`;
+    const open = p.status === 'done' ? '' : ' open';
+    return `<details class="peer-card ${p.status || 'pending'}"${open}>
+      <summary><span class="peer-name">${esc(p.label || p.id)}</span><span class="peer-state">${status}</span></summary>
+      <div class="peer-body">${body}</div>
+    </details>`;
+  }).join('');
+  return `<div class="peers"><div class="peers-title">多模型协作</div>${cards}</div>`;
+}
+
 function messageHtml(m) {
   if (m.role === 'user') {
     const imgs = (m.thumbs || []).map((t) => `<img src="${t}" alt="上传的题目图片">`).join('');
@@ -241,7 +262,7 @@ function messageHtml(m) {
     <div class="avatar">法</div>
     <div class="msg-body">
       <div class="msg-meta">Sage <span class="tag">深度思考</span>${m.context ? '<span class="tag context">承接上文</span>' : ''}${m.stopped ? '<span>· 已停止</span>' : ''}</div>
-      <div class="bubble">${body}</div>
+      <div class="bubble">${body}${peersHtml(m.peers)}</div>
       ${m.error ? '' : `<div class="msg-tools"><button data-copy="${m.id}">复制</button><button data-newtopic="1">新话题</button></div>`}
     </div>
   </article>`;
@@ -694,13 +715,13 @@ async function send() {
   saveState();
   renderHistory();
 
-  const aiMsg = { id: uid(), role: 'assistant', text: '', sources: [], context: hasContext, ts: Date.now() };
+  const aiMsg = { id: uid(), role: 'assistant', text: '', sources: [], peers: [], context: hasContext, ts: Date.now() };
   state.messages.push(aiMsg);
   const aiEl = document.createElement('article');
   aiEl.className = 'msg ai';
   aiEl.dataset.id = aiMsg.id;
   const thinkingLabel = hasContext ? '正在结合上文思考…' : '深度思考中…';
-  aiEl.innerHTML = `<div class="avatar">法</div><div class="msg-body"><div class="msg-meta">Sage <span class="tag">深度思考</span>${hasContext ? '<span class="tag context">承接上文</span>' : ''}</div><div class="bubble streaming"><div class="markdown"><p class="thinking">${thinkingLabel}</p></div></div></div>`;
+  aiEl.innerHTML = `<div class="avatar">法</div><div class="msg-body"><div class="msg-meta">Sage <span class="tag">深度思考</span>${hasContext ? '<span class="tag context">承接上文</span>' : ''}</div><div class="bubble streaming"><div class="markdown"><p class="thinking">${thinkingLabel}</p></div><div class="live-peers"></div></div></div>`;
   $('#messages').appendChild(aiEl);
   scrollBottom(true);
 
@@ -735,6 +756,9 @@ async function send() {
   try {
     const headers = { 'content-type': 'application/json' };
     if (state.apiKey) headers['x-user-api-key'] = state.apiKey;
+    if (state.doubaoKey) { headers['x-doubao-key'] = state.doubaoKey; headers['x-doubao-model'] = state.doubaoModel; }
+    if (state.qwenKey) { headers['x-qwen-key'] = state.qwenKey; headers['x-qwen-model'] = state.qwenModel; }
+    if (state.multi) headers['x-multi'] = '1';
     const res = await fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify(payload), signal: ac.signal });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
@@ -760,6 +784,23 @@ async function send() {
         let data; try { data = JSON.parse(datas.join('\n')); } catch { continue; }
         if (ev === 'meta') {
           aiMsg.sources = data.sources || [];
+          aiMsg.peers = Array.isArray(data.peers) ? data.peers : [];
+          const lp = aiEl.querySelector('.live-peers');
+          if (lp) lp.innerHTML = peersHtml(aiMsg.peers);
+          continue;
+        }
+        if (ev === 'peer') {
+          const p = aiMsg.peers.find((x) => x.id === data.id);
+          if (p) {
+            p.status = data.status || 'done';
+            p.text = data.text || '';
+            p.error = data.error || '';
+          } else {
+            aiMsg.peers.push({ id: data.id, label: data.label, status: data.status || 'done', text: data.text || '', error: data.error || '' });
+          }
+          const lp = aiEl.querySelector('.live-peers');
+          if (lp) lp.innerHTML = peersHtml(aiMsg.peers);
+          scrollBottom();
           continue;
         }
         if (ev === 'thinking') {
@@ -949,6 +990,11 @@ async function checkHealth() {
 const settings = $('#settingsDialog');
 function openSettings() {
   $('#apiKey').value = state.apiKey;
+  $('#doubaoKey').value = state.doubaoKey;
+  $('#qwenKey').value = state.qwenKey;
+  $('#doubaoModel').value = state.doubaoModel;
+  $('#qwenModel').value = state.qwenModel;
+  $('#multiToggle').checked = state.multi;
   setMode(state.mode);
   checkHealth();
   settings.showModal();
@@ -957,7 +1003,17 @@ $('#btnSettings').addEventListener('click', openSettings);
 $('#sideSettings').addEventListener('click', () => { closeSidebar(); openSettings(); });
 $('#btnSaveSettings').addEventListener('click', () => {
   state.apiKey = $('#apiKey').value.trim();
+  state.doubaoKey = $('#doubaoKey').value.trim();
+  state.qwenKey = $('#qwenKey').value.trim();
+  state.doubaoModel = $('#doubaoModel').value.trim() || 'doubao-seed-1-6-250615';
+  state.qwenModel = $('#qwenModel').value.trim() || 'qwen-plus';
+  state.multi = $('#multiToggle').checked;
   localStorage.setItem('sage_key', state.apiKey);
+  localStorage.setItem('sage_doubao_key', state.doubaoKey);
+  localStorage.setItem('sage_qwen_key', state.qwenKey);
+  localStorage.setItem('sage_doubao_model', state.doubaoModel);
+  localStorage.setItem('sage_qwen_model', state.qwenModel);
+  localStorage.setItem('sage_multi', state.multi ? '1' : '0');
   settings.close();
   checkHealth();
   toast('设置已保存');
