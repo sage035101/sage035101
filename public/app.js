@@ -7,45 +7,6 @@ const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const SUBJECTS = ['全部', '刑法', '民法', '法理', '宪法', '法制史'];
 const SUBJECT_NAMES = { 全部: '全部', 刑法: '刑法', 民法: '民法', 法理: '法理学', 宪法: '宪法学', 法制史: '法制史' };
 
-const QUICK = {
-  全部: [
-    '帮信罪与掩隐罪怎么区分？',
-    '善意取得与无权处分合同效力',
-    '法律解释的方法及位阶',
-    '合宪性审查与备案审查的区别',
-  ],
-  刑法: [
-    '帮信罪与掩隐罪怎么区分？',
-    '正当防卫的限度如何判断？',
-    '共同犯罪中帮助犯与教唆犯的界限',
-    '盗窃、诈骗、抢夺的区分',
-  ],
-  民法: [
-    '善意取得与无权处分合同效力',
-    '表见代理的构成要件',
-    '缔约过失与违约责任的界限',
-    '居住权的设立与效力',
-  ],
-  法理: [
-    '法律解释的方法及位阶',
-    '法律溯及力与从旧兼从轻',
-    '法治与法制的区别',
-    '法律关系客体的种类',
-  ],
-  宪法: [
-    '合宪性审查与备案审查的区别',
-    '我国基本权利的限制原则',
-    '全国人大与常委会的职权划分',
-    '民族区域自治机关的自治权',
-  ],
-  法制史: [
-    '《唐律疏议》的礼法合一',
-    '西周“礼不下庶人，刑不上大夫”',
-    '《法经》的结构与历史地位',
-    '清末修律的主要内容',
-  ],
-};
-
 const STORE_KEY = 'sage_conversations_v2';
 const state = {
   subject: '全部',
@@ -291,15 +252,10 @@ function renderMessages() {
   $('#welcome').style.display = state.messages.length ? 'none' : '';
   scrollBottom();
 }
-function renderWelcomeSamples() {
-  const list = QUICK[state.subject] || QUICK['全部'];
-  $('#welcomeSamples').innerHTML = list.map((q) => `<button data-q="${esc(q)}">${esc(q)}</button>`).join('');
-}
 function setSubject(s) {
   if (!SUBJECTS.includes(s)) return;
   state.subject = s;
   $$('#subjectBar button').forEach((b) => b.classList.toggle('active', b.dataset.subject === s));
-  renderWelcomeSamples();
   if (state.messages.length) toast(`已切换到${SUBJECT_NAMES[s]}`);
 }
 function setMode(mode) {
@@ -959,17 +915,10 @@ $('#renameForm').addEventListener('submit', (e) => {
 $('#btnRenameClose').addEventListener('click', () => $('#renameDialog').close());
 $('#renameDialog').addEventListener('click', (e) => { if (e.target === $('#renameDialog')) $('#renameDialog').close(); });
 
-/* ---------------- subject / samples ---------------- */
+/* ---------------- subject ---------------- */
 $('#subjectBar').addEventListener('click', (e) => {
   const b = e.target.closest('[data-subject]');
   if (b) setSubject(b.dataset.subject);
-});
-document.addEventListener('click', (e) => {
-  const q = e.target.closest('[data-q]');
-  if (!q) return;
-  input.value = q.dataset.q;
-  autoResize();
-  input.focus();
 });
 
 /* ---------------- health / settings ---------------- */
@@ -1126,10 +1075,26 @@ async function handleFiles(files) {
   checkHealth();
 }
 
+/* ---------------- viewport / keyboard ---------------- */
+function syncViewport() {
+  const vv = window.visualViewport;
+  const h = vv ? vv.height : window.innerHeight;
+  document.documentElement.style.setProperty('--app-height', `${Math.round(h)}px`);
+  if (vv && vv.offsetTop > 0) window.scrollTo(0, 0);
+}
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', syncViewport);
+  window.visualViewport.addEventListener('scroll', syncViewport);
+}
+window.addEventListener('resize', syncViewport);
+window.addEventListener('orientationchange', () => setTimeout(syncViewport, 250));
+input.addEventListener('focus', () => setTimeout(syncViewport, 350));
+input.addEventListener('blur', () => setTimeout(syncViewport, 150));
+syncViewport();
+
 /* ---------------- init ---------------- */
 loadStore();
 renderHistory();
-renderWelcomeSamples();
 setMode(state.mode);
 renderMessages();
 renderAttachments();

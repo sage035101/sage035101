@@ -48,7 +48,12 @@ svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
   width:36px;height:36px;border-radius:9px;background:var(--sage);color:#f8fbff;
   font-family:var(--serif);font-size:21px;display:grid;place-items:center;
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.18),0 4px 10px rgba(63,95,130,.18);
+  position:relative;overflow:hidden;
 }
+.brand-seal img,.welcome-mark img{width:100%;height:100%;object-fit:contain;display:block}
+.brand-seal.has-logo,.welcome-mark.has-logo{background:transparent;box-shadow:none}
+.brand-seal.has-logo .logo-fallback,.welcome-mark.has-logo .logo-fallback{display:none}
+.logo-fallback{display:grid;place-items:center;width:100%;height:100%}
 .brand-text{display:flex;flex-direction:column;line-height:1.2}
 .brand-text strong{font-family:var(--serif);font-size:16px;letter-spacing:.02em}
 .brand-text span{font-size:10.5px;color:var(--muted);letter-spacing:.08em;margin-top:2px}
@@ -78,7 +83,7 @@ svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
 .menu-btn:hover{background:var(--sage-3)}
 
 /* layout */
-.shell{display:flex;height:calc(100dvh - 64px)}
+.shell{display:flex;height:calc(var(--app-height, 100dvh) - 64px)}
 .sidebar{
   width:238px;flex:0 0 238px;border-right:1px solid var(--line);padding:22px 16px 16px;
   display:flex;flex-direction:column;gap:24px;background:rgba(247,250,252,.45);
@@ -119,13 +124,13 @@ svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
 /* welcome */
 .welcome{max-width:880px;margin:0 auto;padding:56px 8px 32px;text-align:center;animation:rise .5s ease both}
 .welcome-mark{
-  width:54px;height:54px;margin:0 auto 16px;border-radius:14px;background:var(--sage);color:#f8fbff;
+  width:58px;height:58px;margin:0 auto 16px;border-radius:14px;background:var(--sage);color:#f8fbff;
   font-family:var(--serif);font-size:30px;display:grid;place-items:center;
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.2),0 8px 24px rgba(63,95,130,.2);
+  position:relative;overflow:hidden;
 }
 .eyebrow{font-size:10px;letter-spacing:.24em;color:var(--gold);font-weight:600;margin:0 0 10px}
-.welcome h1{font-family:var(--serif);font-size:38px;line-height:1.32;font-weight:600;margin:0 0 14px;letter-spacing:.02em}
-.welcome .lede{max-width:590px;margin:0 auto;color:var(--muted);font-size:13.5px;line-height:1.9}
+.welcome-hint{font-size:12px;color:var(--faint);letter-spacing:.08em;margin:0}
 .subject-cards{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:30px 0 22px;text-align:left}
 .subject-cards button{
   background:rgba(255,255,255,.7);border:1px solid var(--line);border-radius:12px;padding:13px 11px 12px;
@@ -394,7 +399,7 @@ svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
   .new-btn span{display:none}
   .new-btn{width:32px;padding:0;justify-content:center}
   .menu-btn{display:grid;width:32px}
-  .shell{height:calc(100dvh - 57px)}
+  .shell{height:calc(var(--app-height, 100dvh) - 57px)}
   .sidebar{
     position:fixed;left:0;top:57px;bottom:0;z-index:25;width:250px;transform:translateX(-102%);
     transition:transform .22s ease;background:var(--paper-2);box-shadow:12px 0 40px rgba(0,0,0,.12);

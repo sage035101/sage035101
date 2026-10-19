@@ -2,16 +2,19 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#f6f2e9">
 <title>Sage · 答疑平台</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23436554'/%3E%3Ctext x='32' y='44' font-size='36' text-anchor='middle' fill='%23f6f2e9' font-family='serif'%3E%E6%B3%95%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="./styles.css?v=9">
+<link rel="stylesheet" href="./styles.css?v=10">
 </head>
 <body>
 <header class="topbar">
   <div class="brand">
-    <span class="brand-seal">法</span>
+    <span class="brand-seal" id="brandSeal">
+      <img id="brandLogo" src="./logo.png" alt="Sage" onload="this.parentElement.classList.add('has-logo')" onerror="this.style.display='none';this.parentElement.classList.remove('has-logo')">
+      <span class="logo-fallback">法</span>
+    </span>
     <div class="brand-text">
       <strong>Sage</strong>
       <span>答疑平台</span>
@@ -81,10 +84,12 @@
 
     <div class="chat" id="chat">
       <section class="welcome" id="welcome">
-        <div class="welcome-mark">法</div>
+        <div class="welcome-mark" id="welcomeSeal">
+          <img id="welcomeLogo" src="./logo.png" alt="Sage" onload="this.parentElement.classList.add('has-logo')" onerror="this.style.display='none';this.parentElement.classList.remove('has-logo')">
+          <span class="logo-fallback">法</span>
+        </div>
         <p class="eyebrow">SAGE · 答疑平台</p>
-        <h1>把每一个考点，<br class="mobile-only">问到底。</h1>
-        <div class="welcome-samples" id="welcomeSamples"></div>
+        <p class="welcome-hint">直接输入问题，开始答疑</p>
       </section>
       <div class="messages" id="messages" aria-live="polite"></div>
     </div>
@@ -197,6 +202,6 @@
 </div>
 
 <div class="toast" id="toast" role="status"></div>
-<script type="module" src="./app.js?v=9"></script>
+<script type="module" src="./app.js?v=10"></script>
 </body>
 </html>
