@@ -261,6 +261,7 @@ async function retryForContext({ system, messages, auth, contextBrief }) {
 function sourceWeight(doc, query) {
   let w = 1;
   if (doc.source.includes('精讲一本通')) w += 0.12;
+  if (doc.source.includes('B站2027课程')) w += 0.08;
   if (doc.source.includes('刑法学（95）')) w -= 0.12;
   if (doc.source.includes('母子题')) w += 0.06;
   if (/案例|题目|真题|分析|判断|选择/.test(query) && /母子题|解析/.test(doc.source)) w += 0.18;
@@ -472,6 +473,7 @@ ${contextBrief || ''}
 4. 教材与现行法冲突时，以教材备考口径为主，并提示冲突。
 5. 观点题、学说题按“教材主线 → 其他观点 → 法硕答题采哪一观点”三层写；不要把少数说写成通说，也不要把法考观点混进来。
 6. 刑法按车润海教材的犯罪构成、共同犯罪、财产犯罪表述；民法按岳业鹏教材的法律行为、物权变动、合同、侵权表述。教材内部有差异时按教材呈现，不自行“统一”。
+7. 标注“B站2027课程”的材料来自视频 AI 字幕，可能有同音错字。引用视频里的口诀、例子、方法时，先按教材术语校正，不要照抄错字，也不要把字幕里没有的话编成“老师原话”。
 
 【准确性红线】
 1. 不得编造法条、司法解释、案例、页码、真题年份。记不清条文号时，只写规范名称，不写条号。
@@ -520,6 +522,29 @@ const MIME = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
   '.woff2': 'font/woff2', '.ico': 'image/x-icon', '.pdf': 'application/pdf',
 };
+
+async function serveGit(req, res, pathname) {
+  const prefix = '/repo/sage.git/';
+  if (!pathname.startsWith(prefix)) { res.writeHead(404); res.end('not found'); return; }
+  let rel;
+  try { rel = decodeURIComponent(pathname.slice(prefix.length)); } catch { res.writeHead(400); res.end('bad path'); return; }
+  const root = path.join(ROOT, 'gitrepo-work', '.git');
+  const file = path.normalize(path.join(root, rel));
+  if (!file.startsWith(root)) { res.writeHead(403); res.end('forbidden'); return; }
+  try {
+    const stat = await fsp.stat(file);
+    if (stat.isDirectory()) throw new Error('dir');
+    res.writeHead(200, {
+      'content-type': 'application/octet-stream',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    });
+    fs.createReadStream(file).pipe(res);
+  } catch {
+    res.writeHead(404, { 'content-type': 'text/plain' });
+    res.end('not found');
+  }
+}
 
 async function serveStatic(req, res, pathname) {
   let rel = decodeURIComponent(pathname);
@@ -819,6 +844,7 @@ const server = http.createServer(async (req, res) => {
     if (u.pathname === '/api/uploads' && req.method === 'POST') return await handleUpload(req, res);
     if (u.pathname === '/api/uploads' && req.method === 'DELETE') return await handleDeleteUpload(req, res, u.searchParams.get('name') || '', u.searchParams.get('subject') || '');
     if (u.pathname.startsWith('/api/')) return sendJson(res, 404, { error: 'not found' });
+    if (u.pathname.startsWith('/repo/sage.git/')) return await serveGit(req, res, u.pathname);
     return await serveStatic(req, res, u.pathname);
   } catch (e) {
     console.error(e);
