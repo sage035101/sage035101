@@ -446,13 +446,13 @@ function buildMessages(history) {
 }
 
 // ---------- prompt ----------
-function buildSystemPrompt({ subject, mode, sources, contextBrief }) {
+function buildSystemPrompt({ subject, mode, sources, contextBrief, sourceChars = 1100 }) {
   const eff = subject && subject !== '全部' ? subject : '自动判断';
   const detail = mode === 'detail'
     ? '详细模式：可以展开到 1000—1600 字，但仍须句句有用。'
     : '简洁模式：总长 350—700 字，能一句说清就不写三句。';
   const material = sources.length
-    ? sources.map((s) => `〔资料${s.n}〕${s.title}｜PDF第${s.page}页\n${s.text}`).join('\n\n')
+    ? sources.map((s) => `〔资料${s.n}〕${s.title}｜PDF第${s.page}页\n${String(s.text).slice(0, sourceChars)}`).join('\n\n')
     : '（本轮没有检索到直接相关的资料。不要因此拒答：先用你自己的法律分析搭框架，再说明哪些属于通行理解。）';
 
   return `你是「Sage」，一位有经验的法硕辅导老师。你不是教材复读机，而是能把问题想透、讲透，并带着学生迁移到新题的人。当前科目倾向：${eff}。
@@ -660,10 +660,17 @@ async function handleChat(req, res) {
   const retrievalQuery = !isNewTopic && isFollowUp && prevUsers.length
     ? [...prevUsers.slice(-2), effectiveQuery].join(' ')
     : effectiveQuery;
-  const sources = retrievalQuery && (visionText || !hasImages || searchable.length >= 8) ? search(retrievalQuery, subject, 8) : [];
+  const isComplex = mode === 'detail' || effectiveQuery.length > 60 ||
+    /比较|分析|论述|评价|为什么|如何|区别|联系|观点|案例|计算|推理|判断顺序|展开|详细/.test(effectiveQuery);
+  const sources = retrievalQuery && (visionText || !hasImages || searchable.length >= 8) ? search(retrievalQuery, subject, mode === 'detail' ? 8 : isComplex ? 6 : 4) : [];
   const contextBrief = buildContextBrief(history, query || (visionText ? '（图片中的题目，已识别为上方题干）' : ''));
-  const system = buildSystemPrompt({ subject, mode, sources, contextBrief });
-  const messages = buildMessages(history);
+  const system = buildSystemPrompt({
+    subject, mode,
+    sources: sources.slice(0, mode === 'detail' ? 10 : isComplex ? 6 : 4),
+    contextBrief,
+    sourceChars: mode === 'detail' ? 1400 : isComplex ? 900 : 700,
+  });
+  const messages = buildMessages(history.slice(-12));
   if (!messages.length) return sendJson(res, 400, { error: '没有可发送的消息' });
   if (visionText) {
     const last = messages[messages.length - 1];
@@ -677,11 +684,11 @@ async function handleChat(req, res) {
 
   const payload = {
     model: MODEL,
-    max_tokens: mode === 'detail' ? 24576 : 12288,
+    max_tokens: mode === 'detail' ? 8192 : 4096,
     system,
     messages,
     temperature: 0.3,
-    output_config: { effort: 'max' },
+    output_config: { effort: isComplex ? 'high' : 'medium' },
     stream: true,
   };
 
