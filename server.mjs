@@ -406,8 +406,9 @@ async function retryForContext({ system, messages, auth, contextBrief }) {
 
 function sourceWeight(doc, query) {
   let w = 1;
-  if (doc.source.includes('精讲一本通')) w += 0.12;
-  if (doc.source.includes('B站2027课程')) w += 0.08;
+  const mnemonic = /口诀|记忆|背诵|带背|车润海|视频|课程|逻辑|方法/.test(query);
+  if (doc.source.includes('精讲一本通')) w += mnemonic ? 0.22 : 0.12;
+  if (doc.source.includes('B站2027课程')) w += mnemonic ? 0.42 : 0.12;
   if (doc.source.includes('刑法学（95）')) w -= 0.12;
   if (doc.source.includes('母子题')) w += 0.06;
   if (/案例|题目|真题|分析|判断|选择/.test(query) && /母子题|解析/.test(doc.source)) w += 0.18;
@@ -665,7 +666,10 @@ function buildSystemPrompt({ subject, mode, sources, contextBrief, sourceChars =
     ? '详细模式：可以展开到 1000—1600 字，但仍须句句有用。'
     : '简洁模式：总长 350—700 字，能一句说清就不写三句。';
   const material = sources.length
-    ? sources.map((s) => `〔资料${s.n}〕${s.title}｜PDF第${s.page}页\n${String(s.text).slice(0, sourceChars)}`).join('\n\n')
+    ? sources.map((s) => {
+        const loc = String(s.source).includes('B站2027课程') ? `视频第${s.page}讲` : `PDF第${s.page}页`;
+        return `〔资料${s.n}〕${s.title}｜${loc}\n${String(s.text).slice(0, sourceChars)}`;
+      }).join('\n\n')
     : '（本轮没有检索到直接相关的资料。不要因此拒答：先用你自己的法律分析搭框架，再说明哪些属于通行理解。）';
 
   return `你是「Sage」，一位有经验的法硕辅导老师。你不是教材复读机，而是能把问题想透、讲透，并带着学生迁移到新题的人。当前科目倾向：${eff}。
@@ -680,20 +684,27 @@ ${contextBrief || ''}
 5. 若用户明显开启新话题（“换个问题”“另外”），按新问题处理；否则默认承接上文，不重复已讲过的内容。
 
 【教材与观点】
-1. 刑法、民法涉及构成要件、观点取舍、判断顺序时，以【参考材料】中的法硕教材口径为校准；可以换自己的话，但不能把教材结论改掉，也不能混入法考独有观点。
-2. 教材存在多种观点时，先给主线，再用一小段说明争议与应试取舍。
-3. 材料没有直接覆盖的，不要动辄说“教材未涉及”。先按刑法/民法原理推导，明确区分“教材观点”与“你的解释”，再补现行法和有效司法解释。
-4. 教材与现行法冲突时，以教材备考口径为主，并提示冲突。
-5. 观点题、学说题按“教材主线 → 其他观点 → 法硕答题采哪一观点”三层写；不要把少数说写成通说，也不要把法考观点混进来。
+1. 法硕答题的基准顺序是：《2027法硕考试分析》与法硕教材口径 → 车润海/岳业鹏精讲与课程 → 现行法/司法解释补强。不得用《法考》的二阶层、三阶层、法考少数说替换法硕教材的犯罪构成和判断顺序；教材明确采用的观点除外。
+2. 教材存在多种观点时，先给法硕教材主线，再用一小段说明争议与应试取舍；不要把法考通说直接写成法硕通说。
+3. 材料没有直接覆盖的，不要动辄说“教材未涉及”。先按刑法/民法原理推导，明确区分“教材观点”“司法解释补强”与“你的解释”，再补现行法和有效司法解释。
+4. 教材与现行法冲突时，以法硕备考口径为主，并提示冲突；不得用新法条直接推翻教材结论而不说明。
+5. 观点题、学说题按“结论 → 教材主线 → 理由/要件 → 其他观点 → 法硕答题采哪一观点 → 易混点”写；不要把少数说写成通说，也不要把法考观点混进来。
 6. 刑法按车润海教材的犯罪构成、共同犯罪、财产犯罪表述；民法按岳业鹏教材的法律行为、物权变动、合同、侵权表述。教材内部有差异时按教材呈现，不自行“统一”。
-7. 标注“B站2027课程”的材料来自视频 AI 字幕，可能有同音错字。引用视频里的口诀、例子、方法时，先按教材术语校正，不要照抄错字，也不要把字幕里没有的话编成“老师原话”。
+7. 结论必须能在【参考材料】中找到依据；材料与模型记忆冲突时，以材料为准。不要先凭记忆作答再补材料。
+
+【口诀还原】
+1. 用户问“口诀、记忆、背诵、带背、车润海怎么讲、视频里怎么说”时，必须先在【参考材料】的“B站2027课程”中找原文；找到后按“口诀原文 → 逐词对应 → 教材解释/例外 → 易错点”回答。
+2. 口诀原文必须保持词序、词数和结构，只允许把明显的同音错字改成教材术语；不得改写、增删、换顺序，也不得用相近口诀替代。
+3. 材料没有检索到该口诀原文时，明确写“这轮材料未检索到该口诀原文”，再按教材逻辑讲；不得凭记忆冒充车润海原话，也不得把其他老师或法考口诀混进来。
+4. 用户只要口诀时，先给完整口诀，再解释；不要用大段理论淹没口诀本身。
 
 【准确性红线】
 1. 不得编造法条、司法解释、案例、页码、真题年份。记不清条文号时，只写规范名称，不写条号。
-2. 司法解释仅限现行有效的最高人民法院、最高人民检察院解释，写全称；已废止的不得引用。
+2. 司法解释仅限现行有效的最高人民法院、最高人民检察院解释，写全称；已废止的不得引用；不确定是否现行有效时，用“相关司法解释”而不是编造名称或条号。
 3. 案例只可引用最高人民法院、最高人民检察院指导性案例、公报案例或二者公开发布的典型案例；引用具体案件时必须写出指导性案例编号（如“检例第47号”）或公报案例年份期号。写不出编号就不要写案名，改用“类似案件的处理”。不得引用基层法院、普通媒体或虚构案例。
-4. 回答正文不要出现“〔资料n〕”“参考来源”“参考依据”“第x页”或任何来源列表；直接作答。只有用户明确追问“你依据什么 / 参考哪里 / 原文怎么说”时，才用一段教材或法条原文回应，并说明出处；不要把来源附在每次回答后面。
-5. 不确定就明说，宁可少答，不可错答。
+4. 指导性案例和司法解释是“补强”，不是每道题都必须引；教材已经讲清时，不要为了显得权威硬塞案例。教材观点与司法解释冲突时，先交代教材口径，再说明司法解释的补充作用。
+5. 回答正文不要出现“〔资料n〕”“参考来源”“参考依据”“第x页”或任何来源列表；直接作答。只有用户明确追问“你依据什么 / 参考哪里 / 原文怎么说”时，才用一段教材或法条原文回应，并说明出处；不要把来源附在每次回答后面。
+6. 不确定就明说，宁可少答，不可错答；不要把“推测”写成“教材原文”。
 
 【表达】
 1. 结论先行，再依据、要件、涵摄、易混。选择题说明正确项理由，必要时逐项排除。
@@ -966,15 +977,16 @@ async function handleChat(req, res, owner = '', session = null) {
   const retrievalQuery = !isNewTopic && isFollowUp && prevUsers.length
     ? [...prevUsers.slice(-2), effectiveQuery].join(' ')
     : effectiveQuery;
-  const isComplex = mode === 'detail' || effectiveQuery.length > 60 ||
-    /比较|分析|论述|评价|为什么|如何|区别|联系|观点|案例|计算|推理|判断顺序|展开|详细/.test(effectiveQuery);
-  const sources = retrievalQuery && (visionText || !hasImages || searchable.length >= 8) ? search(retrievalQuery, subject, mode === 'detail' ? 8 : isComplex ? 6 : 4, owner) : [];
+  const isMnemonic = /口诀|记忆|背诵|带背|车润海|视频|课程|逻辑|方法/.test(effectiveQuery);
+  const isComplex = mode === 'detail' || isMnemonic || effectiveQuery.length > 60 ||
+    /比较|分析|论述|评价|为什么|如何|区别|联系|观点|案例|计算|推理|判断顺序|展开|详细|教材|法硕|司法解释|指导性/.test(effectiveQuery);
+  const sources = retrievalQuery && (visionText || !hasImages || searchable.length >= 8) ? search(retrievalQuery, subject, mode === 'detail' ? 8 : isMnemonic ? 8 : isComplex ? 6 : 4, owner) : [];
   const contextBrief = buildContextBrief(history, query || (visionText ? '（图片中的题目，已识别为上方题干）' : ''));
   const system = buildSystemPrompt({
     subject, mode,
-    sources: sources.slice(0, mode === 'detail' ? 10 : isComplex ? 6 : 4),
+    sources: sources.slice(0, mode === 'detail' ? 10 : isMnemonic ? 8 : isComplex ? 6 : 4),
     contextBrief,
-    sourceChars: mode === 'detail' ? 1400 : isComplex ? 900 : 700,
+    sourceChars: mode === 'detail' ? 1400 : isMnemonic ? 1200 : isComplex ? 900 : 700,
   });
   const messages = buildMessages(history.slice(-12));
   if (!messages.length) return sendJson(res, 400, { error: '没有可发送的消息' });
@@ -993,7 +1005,7 @@ async function handleChat(req, res, owner = '', session = null) {
     max_tokens: mode === 'detail' ? 8192 : 4096,
     system,
     messages,
-    temperature: 0.3,
+    temperature: 0.2,
     output_config: { effort: isComplex ? 'high' : 'medium' },
     stream: true,
   };
