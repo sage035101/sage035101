@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#f6f2e9">
 <title>Sage · 答疑服务</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23436554'/%3E%3Ctext x='32' y='44' font-size='36' text-anchor='middle' fill='%23f6f2e9' font-family='serif'%3E%E6%B3%95%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="./styles.css?v=15">
+<link rel="stylesheet" href="./styles.css?v=16">
 </head>
 <body>
 <header class="topbar">
@@ -68,7 +68,7 @@
         <button id="sideLibrary">资料库</button>
         <button id="sideSettings">设置</button>
       </div>
-      <p>免登录 · 自测版<br>对话仅保存在本机</p>
+      <p>密码访问 · 自测版<br>对话仅保存在本机</p>
     </div>
   </aside>
   <div class="sidebar-mask" id="sidebarMask"></div>
@@ -157,6 +157,24 @@
   </form>
 </dialog>
 
+<dialog id="renewDialog" class="dialog small">
+  <form method="dialog" class="dialog-card">
+    <div class="dialog-head">
+      <div><p class="eyebrow">RENEW</p><h2>额度已用完</h2></div>
+      <button type="button" class="x" id="btnRenewClose" aria-label="关闭">×</button>
+    </div>
+    <div class="field">
+      <label for="renewCode">新的 6 位答疑密码</label>
+      <input id="renewCode" inputmode="numeric" maxlength="6" placeholder="向站长要一个新的 6 位密码" autocomplete="off">
+      <p class="help">输入新密码后恢复对应的答疑次数；旧密码不能继续使用。</p>
+    </div>
+    <div class="dialog-actions">
+      <span></span>
+      <button type="button" class="primary" id="btnRenewSave">续用</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="settingsDialog" class="dialog">
   <form method="dialog" class="dialog-card">
     <div class="dialog-head">
@@ -209,7 +227,7 @@
     </div>
     <div class="upload-box" id="dropZone">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0 4 4m-4-4L8 8"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
-      <div><strong>上传资料，让答疑继续学习</strong><span>支持文字版 PDF / TXT / Markdown，限 3000 页；扫描版请先 OCR 或直接发图片提问。</span></div>
+      <div><strong>上传资料，仅用于当前密码/浏览器</strong><span>支持文字版 PDF / TXT / Markdown，限 3000 页；不会并入总知识库，其他密码看不到。</span></div>
       <label class="pick">选择文件<input id="fileInput" type="file" accept=".pdf,.txt,.md,text/plain,application/pdf" multiple hidden></label>
     </div>
     <div class="upload-row">
@@ -220,7 +238,7 @@
       </label>
       <div class="upload-progress" id="uploadProgress" hidden><span></span></div>
     </div>
-    <h3 class="lib-title">已上传 <small>仅本机</small></h3>
+    <h3 class="lib-title">已上传 <small>当前密码/浏览器</small></h3>
     <div class="upload-list" id="uploadList"><p class="empty">还没有上传资料。</p></div>
   </div>
 </dialog>
@@ -235,6 +253,6 @@
 </div>
 
 <div class="toast" id="toast" role="status"></div>
-<script type="module" src="./app.js?v=15"></script>
+<script type="module" src="./app.js?v=16"></script>
 </body>
 </html>
