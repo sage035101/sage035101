@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -15,6 +16,107 @@ const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '0.0.0.0';
 const API_BASE = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/anthropic';
 const MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-flash';
+const ACCESS_PASSWORD = String(process.env.SAGE_ACCESS_PASSWORD || '');
+const SESSION_SECRET = String(process.env.SAGE_SESSION_SECRET || crypto.randomBytes(32).toString('hex'));
+const REQUIRE_USER_KEY = process.env.REQUIRE_USER_DEEPSEEK_KEY === '1';
+const SESSION_TTL = 7 * 86400 * 1000;
+const SESSION_COOKIE = 'sage_session';
+const CLIENT_COOKIE = 'sage_client';
+const CLIENT_TTL = 365 * 86400 * 1000;
+const rateBuckets = new Map();
+
+const nowMs = () => Date.now();
+const clientIp = (req) => String(req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.socket?.remoteAddress || 'unknown').split(',')[0].trim();
+function rateLimit(key, limit, windowMs) {
+  const t = nowMs();
+  const b = rateBuckets.get(key) || { start: t, n: 0 };
+  if (t - b.start > windowMs) { b.start = t; b.n = 0; }
+  b.n++;
+  rateBuckets.set(key, b);
+  if (rateBuckets.size > 5000) {
+    for (const [k, v] of rateBuckets) if (t - v.start > 3600000) rateBuckets.delete(k);
+  }
+  return b.n <= limit;
+}
+function parseCookies(req) {
+  const out = {};
+  for (const part of String(req.headers.cookie || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i < 0) continue;
+    try { out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim()); } catch { /* ignore malformed cookie */ }
+  }
+  return out;
+}
+function sessionInfo(req) {
+  const raw = parseCookies(req)[SESSION_COOKIE];
+  if (!raw) return null;
+  const [sid, exp, sig] = raw.split('.');
+  if (!sid || !exp || !sig || Number(exp) < nowMs()) return null;
+  const data = `${sid}.${exp}`;
+  const want = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
+  const a = Buffer.from(sig);
+  const b = Buffer.from(want);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  return { id: sid };
+}
+function setSessionCookie(req, res) {
+  const sid = crypto.randomBytes(18).toString('base64url');
+  const exp = nowMs() + SESSION_TTL;
+  const data = `${sid}.${exp}`;
+  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
+  const secure = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(`${data}.${sig}`)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL / 1000)}${secure ? '; Secure' : ''}`);
+  return sid;
+}
+function clearSession(res) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+}
+function clientInfo(req, res) {
+  const raw = parseCookies(req)[CLIENT_COOKIE];
+  if (raw) {
+    const [sid, exp, sig] = raw.split('.');
+    if (sid && exp && sig && Number(exp) > nowMs()) {
+      const data = `${sid}.${exp}`;
+      const want = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
+      const a = Buffer.from(sig);
+      const b = Buffer.from(want);
+      if (a.length === b.length && crypto.timingSafeEqual(a, b)) return { id: sid };
+    }
+  }
+  const sid = crypto.randomBytes(18).toString('base64url');
+  const exp = nowMs() + CLIENT_TTL;
+  const data = `${sid}.${exp}`;
+  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
+  const secure = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+  res.setHeader('Set-Cookie', `${CLIENT_COOKIE}=${encodeURIComponent(`${data}.${sig}`)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(CLIENT_TTL / 1000)}${secure ? '; Secure' : ''}`);
+  return { id: sid };
+}
+function passwordOk(input) {
+  if (!ACCESS_PASSWORD) return true;
+  const a = Buffer.from(String(input || ''));
+  const b = Buffer.from(ACCESS_PASSWORD);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+function redirect(res, to) {
+  res.writeHead(302, { location: to, 'cache-control': 'no-store' });
+  res.end();
+}
+function loginPage() {
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>访问验证 · Sage 答疑平台</title><style>
+  :root{--ink:#22303f;--muted:#72849a;--line:#d7e1eb;--paper:#eef3f8;--sage:#3f5f82}
+  *{box-sizing:border-box}body{margin:0;min-height:100dvh;display:grid;place-items:center;background:radial-gradient(circle at 20% 10%,#fff,#e9f0f7 60%,#e2ebf4);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;color:var(--ink);padding:20px}
+  .card{width:min(380px,100%);background:rgba(255,255,255,.86);border:1px solid rgba(215,225,235,.9);border-radius:18px;padding:30px 28px 24px;box-shadow:0 24px 70px rgba(42,65,88,.15);text-align:center;backdrop-filter:blur(10px)}
+  img{width:92px;height:auto;display:block;margin:0 auto 8px}h1{font-family:Georgia,"Songti SC",serif;font-size:22px;margin:4px 0 4px}p{font-size:12px;color:var(--muted);margin:0 0 18px;line-height:1.7}
+  input{width:100%;height:44px;border:1px solid var(--line);border-radius:10px;padding:0 13px;font-size:15px;outline:0;background:#fff;color:var(--ink)}
+  input:focus{border-color:#8ba6c2;box-shadow:0 0 0 3px rgba(63,95,130,.09)}
+  button{width:100%;height:44px;margin-top:10px;border:0;border-radius:10px;background:var(--sage);color:#fff;font-size:14px;font-weight:600;cursor:pointer}button:disabled{opacity:.55}
+  .err{min-height:18px;color:#a95b5b;font-size:11.5px;margin:8px 0 0}.fine{font-size:10px;color:#9aa9b8;margin-top:16px;line-height:1.6}
+  </style></head><body><main class="card"><img src="/logo.png" alt="Sage"><h1>Sage 答疑平台</h1><p>这是私人答疑站点，请输入访问密码</p><form id="f"><input id="p" type="password" autocomplete="current-password" placeholder="访问密码" autofocus><button id="b" type="submit">进入</button><div class="err" id="e"></div></form><div class="fine">仅限本人及获授权的人使用<br>请勿把密码和链接转发到公开群</div></main><script>
+  const f=document.querySelector('#f'),p=document.querySelector('#p'),b=document.querySelector('#b'),e=document.querySelector('#e');
+  f.addEventListener('submit',async(ev)=>{ev.preventDefault();e.textContent='';b.disabled=true;try{const r=await fetch('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:p.value})});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'密码不正确');location.href='/'}catch(err){e.textContent=err.message||'密码不正确';b.disabled=false;p.select()}});
+  </script></body></html>`;
+}
+
 
 const SOURCE_TITLES = {  '27法硕精讲一本通-刑法学-车润海.pdf': '《法硕精讲一本通·刑法学》车润海',
   '27法硕精讲一本通-民法学-岳业鹏.pdf': '《法硕精讲一本通·民法》岳业鹏',
@@ -292,7 +394,7 @@ function rebuildIndex() {
   console.log(`[kb] ${docs.length} pages, ${postings.size} terms, avgdl ${avgdl.toFixed(0)}`);
 }
 
-function search(query, subject = '全部', limit = 8) {
+function search(query, subject = '全部', limit = 8, owner = '') {
   if (!indexReady || !docs.length) return [];
   const cleaned = cleanQuery(query);
   if (!cleaned || cleaned.length < 2) return [];
@@ -314,6 +416,7 @@ function search(query, subject = '全部', limit = 8) {
     for (let p = 0; p < arr.length; p += 2) {
       const id = arr[p], tf = arr[p + 1];
       if (subject && subject !== '全部' && docs[id].subject !== subject) continue;
+      if (docs[id].uploaded && docs[id].owner && docs[id].owner !== owner) continue;
       const dl = docLens[id];
       const s = idf * (tf * 2.2) / (tf + 1.2 * (0.25 + 0.75 * dl / avgdl));
       scores.set(id, (scores.get(id) || 0) + s);
@@ -402,6 +505,7 @@ function readAccountToken() {
 function authHeaders(req) {
   const userKey = String(req.headers['x-user-api-key'] || '').trim();
   if (userKey) return { 'x-api-key': userKey };
+  if (REQUIRE_USER_KEY) return null;
   const envKey = String(process.env.DEEPSEEK_API_KEY || '').trim();
   if (envKey) return { 'x-api-key': envKey };
   const token = readAccountToken();
@@ -415,8 +519,8 @@ function peerConfig(req) {
     const s = String(v || '').trim();
     return /^[A-Za-z0-9._:-]{1,100}$/.test(s) ? s : fallback;
   };
-  const doubaoKey = String(req.headers['x-doubao-key'] || process.env.DOUBAO_API_KEY || '').trim();
-  const qwenKey = String(req.headers['x-qwen-key'] || process.env.QWEN_API_KEY || '').trim();
+  const doubaoKey = String(req.headers['x-doubao-key'] || (REQUIRE_USER_KEY ? '' : process.env.DOUBAO_API_KEY) || '').trim();
+  const qwenKey = String(req.headers['x-qwen-key'] || (REQUIRE_USER_KEY ? '' : process.env.QWEN_API_KEY) || '').trim();
   const list = [];
   if (doubaoKey) list.push({
     id: 'doubao', label: '豆包',
@@ -630,9 +734,10 @@ async function serveStatic(req, res, pathname) {
 }
 
 // ---------- uploads ----------
-function listUploads() {
+function listUploads(owner = '') {
   const map = new Map();
   for (const d of readJsonl(UPLOAD_FILE)) {
+    if (owner && d.owner && d.owner !== owner) continue;
     const k = `${d.subject}\u0000${d.source}`;
     if (!map.has(k)) map.set(k, { name: d.source, subject: d.subject, pages: 0, chars: 0, uploaded: true });
     const item = map.get(k);
@@ -691,7 +796,7 @@ async function extractImageQuestion(auth, images) {
 }
 
 // ---------- chat ----------
-async function handleChat(req, res) {
+async function handleChat(req, res, owner = '') {
   let body;
   try { body = JSON.parse(await readBody(req)); } catch { return sendJson(res, 400, { error: '请求格式错误' }); }
   const convId = String(body.conversationId || '').slice(0, 80);
@@ -723,7 +828,7 @@ async function handleChat(req, res) {
     : effectiveQuery;
   const isComplex = mode === 'detail' || effectiveQuery.length > 60 ||
     /比较|分析|论述|评价|为什么|如何|区别|联系|观点|案例|计算|推理|判断顺序|展开|详细/.test(effectiveQuery);
-  const sources = retrievalQuery && (visionText || !hasImages || searchable.length >= 8) ? search(retrievalQuery, subject, mode === 'detail' ? 8 : isComplex ? 6 : 4) : [];
+  const sources = retrievalQuery && (visionText || !hasImages || searchable.length >= 8) ? search(retrievalQuery, subject, mode === 'detail' ? 8 : isComplex ? 6 : 4, owner) : [];
   const contextBrief = buildContextBrief(history, query || (visionText ? '（图片中的题目，已识别为上方题干）' : ''));
   const system = buildSystemPrompt({
     subject, mode,
@@ -885,7 +990,7 @@ async function handleChat(req, res) {
   res.end();
 }
 
-async function handleUpload(req, res) {
+async function handleUpload(req, res, owner = '') {
   let body;
   try { body = JSON.parse(await readBody(req)); } catch { return sendJson(res, 400, { error: '请求格式错误' }); }
   const name = String(body.name || '').trim().slice(0, 120);
@@ -893,24 +998,24 @@ async function handleUpload(req, res) {
   const pages = Array.isArray(body.pages) ? body.pages : [];
   if (!name || !pages.length) return sendJson(res, 400, { error: '缺少文件内容' });
   if (pages.length > 3000) return sendJson(res, 400, { error: '文件页数过多（上限 3000 页）' });
-  const old = readJsonl(UPLOAD_FILE).filter((d) => !(d.source === name && d.subject === subject));
+  const old = readJsonl(UPLOAD_FILE).filter((d) => !(d.source === name && d.subject === subject && (d.owner || '') === owner));
   let chars = 0;
   const added = [];
   for (let i = 0; i < pages.length; i++) {
     const raw = String(pages[i]?.text || '').replace(/\u0000/g, '').trim();
     if (raw.length < 20) continue;
     chars += raw.length;
-    added.push({ subject, source: name, book: name, page: Number(pages[i]?.page) || i + 1, text: raw.slice(0, 20000), uploaded: true });
+    added.push({ subject, source: name, book: name, owner, page: Number(pages[i]?.page) || i + 1, text: raw.slice(0, 20000), uploaded: true });
   }
   if (!added.length) return sendJson(res, 400, { error: '没有提取到可用文字（可能是扫描版 PDF）' });
   await fsp.writeFile(UPLOAD_FILE, [...old, ...added].map((d) => JSON.stringify(d)).join('\n') + '\n', 'utf8');
   rebuildIndex();
-  sendJson(res, 200, { ok: true, pages: added.length, chars, uploads: listUploads() });
+  sendJson(res, 200, { ok: true, pages: added.length, chars, uploads: listUploads(owner) });
 }
 
-async function handleDeleteUpload(req, res, name, subject) {
+async function handleDeleteUpload(req, res, name, subject, owner = '') {
   const all = readJsonl(UPLOAD_FILE);
-  const left = all.filter((d) => !(d.source === name && d.subject === subject));
+  const left = all.filter((d) => !(d.source === name && d.subject === subject && (d.owner || '') === owner));
   if (left.length === all.length) return sendJson(res, 404, { error: '未找到该资料' });
   await fsp.writeFile(UPLOAD_FILE, left.map((d) => JSON.stringify(d)).join('\n') + (left.length ? '\n' : ''), 'utf8');
   rebuildIndex();
@@ -918,25 +1023,113 @@ async function handleDeleteUpload(req, res, name, subject) {
 }
 
 // ---------- server ----------
+function applySecurityHeaders(res) {
+  res.setHeader('x-content-type-options', 'nosniff');
+  res.setHeader('x-frame-options', 'DENY');
+  res.setHeader('referrer-policy', 'no-referrer');
+  res.setHeader('permissions-policy', 'camera=(), microphone=(self), geolocation=()');
+  res.setHeader('cross-origin-opener-policy', 'same-origin');
+}
+
+function adminPage() {
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>管理面板 · Sage 答疑平台</title><style>
+  :root{--ink:#22303f;--muted:#72849a;--line:#d7e1eb;--sage:#3f5f82}
+  *{box-sizing:border-box}body{margin:0;background:#eef3f8;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;padding:28px}
+  .wrap{max-width:880px;margin:0 auto}.top{display:flex;align-items:center;gap:12px;margin-bottom:18px}.top img{width:44px;height:44px;object-fit:contain}
+  h1{font-family:Georgia,"Songti SC",serif;font-size:24px;margin:0}.sub{font-size:12px;color:var(--muted);margin-top:4px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px}
+  .card b{display:block;font-size:22px;font-family:Georgia,serif;margin-top:4px}.card span{font-size:11px;color:var(--muted)}
+  .panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:12px;font-size:12.5px;line-height:1.9}
+  .panel h2{font-size:13px;margin:0 0 8px;color:var(--sage)}a{color:var(--sage)}code{background:#eef3f8;padding:1px 5px;border-radius:4px;font-size:11px}
+  .pill{display:inline-block;font-size:10px;background:#e8f0f8;color:var(--sage);border-radius:99px;padding:2px 8px;margin-left:6px}
+  </style></head><body><div class="wrap"><div class="top"><img src="/logo.png" alt=""><div><h1>管理面板</h1><div class="sub">Sage 答疑平台 · 仅访问密码持有者可见</div></div></div>
+  <div class="grid" id="cards"></div>
+  <div class="panel"><h2>服务控制</h2>
+  <div>公网入口：<code>https://sage-qa.onrender.com</code>（HTTPS 443）</div>
+  <div>Render 内部端口：<code>PORT</code> 环境变量（默认 10000），不对公网开放；本机开发端口 <code>8787</code></div>
+  <div>云端控制台：<a href="https://dashboard.render.com/web/srv-dbb0s2m7bikc73baj2h0" target="_blank" rel="noopener">Render Dashboard</a> · <a href="https://github.com/sage035101/sage035101" target="_blank" rel="noopener">GitHub 源码仓库</a></div>
+  <div>修改环境变量或重启：Render 服务页 → Environment / Manual Deploy。</div>
+  </div>
+  <div class="panel"><h2>当前安全开关</h2><div id="flags">加载中…</div></div>
+  <div class="panel"><h2>会话</h2><button onclick="fetch('/api/logout',{method:'POST'}).then(()=>location.href='/login')" style="border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 14px;cursor:pointer">退出访问</button></div>
+  </div><script>
+  fetch('/api/admin/status').then(r=>r.json()).then(j=>{
+    const cards=[['知识库',j.docs,'条'],['去重页数',j.pages,'页'],['我的上传',j.uploads,'个'],['运行时长',Math.round(j.uptime/60),'分钟']];
+    document.querySelector('#cards').innerHTML=cards.map(c=>'<div class="card"><span>'+c[0]+'</span><b>'+c[1]+'</b><span>'+c[2]+'</span></div>').join('');
+    document.querySelector('#flags').innerHTML='<div>访问密码：'+(j.accessGate?'<b style="color:#3f5f82">已开启</b>':'未开启')+'</div><div>强制自带 DeepSeek Key：'+(j.requireUserKey?'<b style="color:#3f5f82">已开启</b>':'未开启')+'</div><div>模型：<code>'+j.model+'</code> · 当前会话：<code>'+(j.owner||'—')+'</code></div><div>Node：<code>'+j.node+'</code> · 环境：<code>'+j.env+'</code></div>';
+  }).catch(()=>{document.querySelector('#flags').textContent='无法读取状态'});
+  </script></body></html>`;
+}
+
 const server = http.createServer(async (req, res) => {
+  applySecurityHeaders(res);
   const u = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const p = u.pathname;
   try {
-    if (u.pathname === '/api/health') {
+    if (p === '/login') {
+      if (!ACCESS_PASSWORD || sessionInfo(req)) return redirect(res, '/');
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(loginPage());
+    }
+    if (p === '/api/login' && req.method === 'POST') {
+      if (!rateLimit('login:' + clientIp(req), 10, 600000)) return sendJson(res, 429, { error: '尝试次数过多，请稍后再试' });
+      if (!ACCESS_PASSWORD) return sendJson(res, 400, { error: '未设置访问密码' });
+      let body;
+      try { body = JSON.parse(await readBody(req, 4096)); } catch { return sendJson(res, 400, { error: '请求格式错误' }); }
+      if (!passwordOk(body.password)) return sendJson(res, 401, { error: '密码不正确' });
+      setSessionCookie(req, res);
+      return sendJson(res, 200, { ok: true });
+    }
+    if (p === '/api/logout' && req.method === 'POST') {
+      clearSession(res);
+      return sendJson(res, 200, { ok: true });
+    }
+    if (p === '/api/health') {
       const auth = authHeaders(req);
       const pages = new Set(docs.map((d) => `${d.source}|${d.page}`)).size;
       return sendJson(res, 200, {
         ok: !!auth, docs: docs.length, pages, model: MODEL,
+        requireUserKey: REQUIRE_USER_KEY, accessGate: !!ACCESS_PASSWORD,
         subjects: SUBJECTS.reduce((a, s) => (a[s] = docs.filter((d) => d.subject === s).length, a), {}),
-        uploads: listUploads().length,
+        uploads: listUploads(sessionInfo(req)?.id || '').length,
       });
     }
-    if (u.pathname === '/api/chat' && req.method === 'POST') return await handleChat(req, res);
-    if (u.pathname === '/api/uploads' && req.method === 'GET') return sendJson(res, 200, { uploads: listUploads() });
-    if (u.pathname === '/api/uploads' && req.method === 'POST') return await handleUpload(req, res);
-    if (u.pathname === '/api/uploads' && req.method === 'DELETE') return await handleDeleteUpload(req, res, u.searchParams.get('name') || '', u.searchParams.get('subject') || '');
-    if (u.pathname.startsWith('/api/')) return sendJson(res, 404, { error: 'not found' });
-    if (u.pathname.startsWith('/repo/sage.git/')) return await serveGit(req, res, u.pathname);
-    return await serveStatic(req, res, u.pathname);
+
+    const info = sessionInfo(req);
+    if (ACCESS_PASSWORD && !info) {
+      if (p === '/logo.png' || p === '/logo-mark.png' || p === '/favicon.ico') {
+        return await serveStatic(req, res, p);
+      }
+      if (p.startsWith('/api/')) return sendJson(res, 401, { error: '需要访问密码' });
+      return redirect(res, '/login');
+    }
+    const owner = clientInfo(req, res).id;
+
+    if (p === '/admin') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(adminPage());
+    }
+    if (p === '/api/admin/status') {
+      const pages = new Set(docs.map((d) => `${d.source}|${d.page}`)).size;
+      return sendJson(res, 200, {
+        ok: true, docs: docs.length, pages, model: MODEL,
+        uploads: listUploads(owner).length, accessGate: !!ACCESS_PASSWORD,
+        requireUserKey: REQUIRE_USER_KEY, owner: owner ? owner.slice(0, 8) + '…' : '',
+        uptime: Math.round(process.uptime()), node: process.version, env: process.env.NODE_ENV || 'production',
+      });
+    }
+    if (p === '/api/chat' && req.method === 'POST') {
+      if (!rateLimit('chat:' + clientIp(req), 60, 600000)) return sendJson(res, 429, { error: '请求过于频繁，请 10 分钟后再试' });
+      return await handleChat(req, res, owner);
+    }
+    if (p === '/api/uploads' && req.method === 'GET') return sendJson(res, 200, { uploads: listUploads(owner) });
+    if (p === '/api/uploads' && req.method === 'POST') {
+      if (!rateLimit('upload:' + clientIp(req), 20, 3600000)) return sendJson(res, 429, { error: '上传过于频繁，请稍后再试' });
+      return await handleUpload(req, res, owner);
+    }
+    if (p === '/api/uploads' && req.method === 'DELETE') return await handleDeleteUpload(req, res, u.searchParams.get('name') || '', u.searchParams.get('subject') || '', owner);
+    if (p.startsWith('/api/')) return sendJson(res, 404, { error: 'not found' });
+    return await serveStatic(req, res, p);
   } catch (e) {
     console.error(e);
     if (!res.headersSent) sendJson(res, 500, { error: '服务器错误' });
