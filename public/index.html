@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#f6f2e9">
 <title>Sage · 答疑平台</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23436554'/%3E%3Ctext x='32' y='44' font-size='36' text-anchor='middle' fill='%23f6f2e9' font-family='serif'%3E%E6%B3%95%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="./styles.css?v=13">
+<link rel="stylesheet" href="./styles.css?v=14">
 </head>
 <body>
 <header class="topbar">
@@ -146,9 +146,9 @@
       <button class="x" value="close" aria-label="关闭">×</button>
     </div>
     <div class="field">
-      <label for="apiKey">DeepSeek API Key <small>（可选）</small></label>
-      <input id="apiKey" type="password" placeholder="sk-… 留空则使用本机已登录的 DeepSeek 账号" autocomplete="off">
-      <p class="help">仅保存在本机浏览器，用于在账号凭据失效时兜底。不会写入服务器日志。</p>
+      <label for="apiKey">DeepSeek API Key <small>（必填）</small></label>
+      <input id="apiKey" type="password" placeholder="sk-… 本站已关闭公共额度，请填自己的 Key" autocomplete="off">
+      <p class="help">本站不再使用站长的公共 DeepSeek 额度。Key 仅保存在本机浏览器，不会写入服务器日志；只用于你自己的提问。</p>
     </div>
     <div class="field">
       <label>多模型协作</label>
@@ -217,6 +217,6 @@
 </div>
 
 <div class="toast" id="toast" role="status"></div>
-<script type="module" src="./app.js?v=13"></script>
+<script type="module" src="./app.js?v=14"></script>
 </body>
 </html>
