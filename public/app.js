@@ -17,6 +17,8 @@ const state = {
   doubaoModel: localStorage.getItem('sage_doubao_model') || 'doubao-seed-1-6-250615',
   qwenModel: localStorage.getItem('sage_qwen_model') || 'qwen-plus',
   multi: localStorage.getItem('sage_multi') !== '0',
+  role: null,
+  quota: null,
   conversations: [],
   currentId: null,
   messages: [],
@@ -31,6 +33,7 @@ const state = {
   mergeIds: new Set(),
   histMenuId: null,
   renameId: null,
+  editId: null,
 };
 
 function uid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36); }
@@ -693,32 +696,36 @@ function scrollBottom(force = false) {
   if (force || chat.scrollHeight - chat.scrollTop - chat.clientHeight < 160) chat.scrollTop = chat.scrollHeight;
 }
 
-async function send() {
+async function send(opts = {}) {
   if (state.streaming) return;
   stopVoice();
   hideVoiceHelp();
-  const text = input.value.trim();
+  const editMsg = opts.editMsg || null;
+  const text = editMsg ? String(editMsg.text || '').trim() : input.value.trim();
   if (!text && !state.pending.length) { input.focus(); return; }
-  if (!state.apiKey) {
-    toast('本站已关闭公共额度，请先在设置填写自己的 DeepSeek API Key');
-    openSettings();
-    return;
-  }
   const hasContext = state.messages.some((m) => m.role === 'assistant' && String(m.text || '').trim());
-  const imgs = state.pending.map((p) => p.full);
-  const thumbs = state.pending.map((p) => p.thumb);
-  const userMsg = { id: uid(), role: 'user', text, thumbs, ts: Date.now() };
-  state.messages.push(userMsg);
-  const cur = currentConversation();
-  if (!cur.title || cur.title === '新对话') cur.title = titleFromMessages(state.messages);
-  state.pending = [];
-  renderAttachments();
-  input.value = '';
-  autoResize();
-  renderMessages();
-  scrollBottom(true);
-  saveState();
-  renderHistory();
+  const imgs = editMsg ? [] : state.pending.map((p) => p.full);
+  const thumbs = editMsg ? (editMsg.thumbs || []) : state.pending.map((p) => p.thumb);
+  let userMsg;
+  if (editMsg) {
+    userMsg = editMsg;
+    userMsg.text = text;
+    renderMessages();
+    saveState();
+  } else {
+    userMsg = { id: uid(), role: 'user', text, thumbs, ts: Date.now() };
+    state.messages.push(userMsg);
+    const cur = currentConversation();
+    if (!cur.title || cur.title === '新对话') cur.title = titleFromMessages(state.messages);
+    state.pending = [];
+    renderAttachments();
+    input.value = '';
+    autoResize();
+    renderMessages();
+    scrollBottom(true);
+    saveState();
+    renderHistory();
+  }
 
   const aiMsg = { id: uid(), role: 'assistant', text: '', sources: [], peers: [], context: hasContext, ts: Date.now() };
   state.messages.push(aiMsg);
@@ -764,9 +771,15 @@ async function send() {
     if (state.doubaoKey) { headers['x-doubao-key'] = state.doubaoKey; headers['x-doubao-model'] = state.doubaoModel; }
     if (state.qwenKey) { headers['x-qwen-key'] = state.qwenKey; headers['x-qwen-model'] = state.qwenModel; }
     if (state.multi) headers['x-multi'] = '1';
+    if (editMsg) headers['x-quota-skip'] = '1';
     const res = await fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify(payload), signal: ac.signal });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
+      if (res.status === 401) { location.href = '/login?kicked=1'; }
+      if (res.status === 403 && typeof j.error === 'string' && j.error.includes('260')) {
+        state.quota = 0;
+        renderQuota();
+      }
       throw new Error(j.error || `请求失败（${res.status}）`);
     }
     const reader = res.body.getReader();
@@ -790,6 +803,10 @@ async function send() {
         if (ev === 'meta') {
           aiMsg.sources = data.sources || [];
           aiMsg.peers = Array.isArray(data.peers) ? data.peers : [];
+          if (Object.prototype.hasOwnProperty.call(data, 'quota')) {
+            state.quota = data.quota;
+            renderQuota();
+          }
           const lp = aiEl.querySelector('.live-peers');
           if (lp) lp.innerHTML = peersHtml(aiMsg.peers);
           continue;
@@ -961,6 +978,57 @@ $('#renameForm').addEventListener('submit', (e) => {
 $('#btnRenameClose').addEventListener('click', () => $('#renameDialog').close());
 $('#renameDialog').addEventListener('click', (e) => { if (e.target === $('#renameDialog')) $('#renameDialog').close(); });
 
+function lastUserMessage() {
+  return [...state.messages].reverse().find((m) => m.role === 'user');
+}
+function openEdit(id) {
+  if (state.streaming) { toast('正在回答，稍后再修改'); return; }
+  const msg = state.messages.find((m) => m.id === id && m.role === 'user');
+  if (!msg) return;
+  if (msg !== lastUserMessage()) { toast('只能修改最近一条问题'); return; }
+  if (msg.edited) { toast('这条问题已经修改过一次了'); return; }
+  state.editId = id;
+  $('#editText').value = msg.text || '';
+  $('#editDialog').showModal();
+  setTimeout(() => $('#editText').focus(), 80);
+}
+$('#btnEditSave').addEventListener('click', () => {
+  const msg = state.messages.find((m) => m.id === state.editId && m.role === 'user');
+  const text = $('#editText').value.trim();
+  if (!msg || !text) return;
+  if (text === msg.text) { $('#editDialog').close(); return; }
+  const idx = state.messages.indexOf(msg);
+  if (state.messages[idx + 1]?.role === 'assistant') state.messages.splice(idx + 1, 1);
+  msg.text = text.slice(0, 4000);
+  msg.edited = true;
+  state.editId = null;
+  $('#editDialog').close();
+  renderMessages();
+  saveState();
+  send({ editMsg: msg });
+});
+$('#btnEditClose').addEventListener('click', () => { state.editId = null; $('#editDialog').close(); });
+$('#editDialog').addEventListener('click', (e) => { if (e.target === $('#editDialog')) { state.editId = null; $('#editDialog').close(); } });
+
+let editPressTimer = null;
+function clearEditPress() { if (editPressTimer) { clearTimeout(editPressTimer); editPressTimer = null; } }
+$('#messages').addEventListener('pointerdown', (e) => {
+  const bubble = e.target.closest('.msg.user .bubble');
+  if (!bubble) return;
+  const id = bubble.closest('.msg')?.dataset.id;
+  clearEditPress();
+  editPressTimer = setTimeout(() => { editPressTimer = null; openEdit(id); }, 550);
+});
+['pointerup', 'pointermove', 'pointercancel', 'scroll'].forEach((evt) => {
+  $('#messages').addEventListener(evt, clearEditPress, { passive: true });
+});
+$('#messages').addEventListener('contextmenu', (e) => {
+  const bubble = e.target.closest('.msg.user .bubble');
+  if (!bubble) return;
+  e.preventDefault();
+  openEdit(bubble.closest('.msg')?.dataset.id);
+});
+
 /* ---------------- subject ---------------- */
 $('#subjectBar').addEventListener('click', (e) => {
   const b = e.target.closest('[data-subject]');
@@ -968,6 +1036,27 @@ $('#subjectBar').addEventListener('click', (e) => {
 });
 
 /* ---------------- health / settings ---------------- */
+function renderQuota() {
+  const el = $('#quotaPill');
+  if (!el) return;
+  if (state.role === 'guest' && state.quota !== null) {
+    el.hidden = false;
+    el.textContent = `余${state.quota}`;
+    el.title = '剩余答疑次数';
+  } else {
+    el.hidden = true;
+  }
+}
+async function loadSession() {
+  try {
+    const r = await fetch('/api/session');
+    if (r.status === 401) { location.href = '/login?kicked=1'; return; }
+    const j = await r.json();
+    state.role = j.role || null;
+    state.quota = j.quota;
+    renderQuota();
+  } catch { /* network error: leave UI as-is */ }
+}
 async function checkHealth() {
   const status = $('#status');
   const txt = $('#statusText');
@@ -1167,5 +1256,7 @@ renderMessages();
 renderAttachments();
 $$('#subjectBar button').forEach((b) => b.classList.toggle('active', b.dataset.subject === state.subject));
 if (!state.messages.length) setTimeout(() => input.focus(), 200);
+loadSession();
 checkHealth();
 setInterval(checkHealth, 60000);
+setInterval(loadSession, 60000);
