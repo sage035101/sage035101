@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#f6f2e9">
 <title>Sage · 答疑平台</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23436554'/%3E%3Ctext x='32' y='44' font-size='36' text-anchor='middle' fill='%23f6f2e9' font-family='serif'%3E%E6%B3%95%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="./styles.css?v=12">
+<link rel="stylesheet" href="./styles.css?v=13">
 </head>
 <body>
 <header class="topbar">
@@ -151,6 +151,21 @@
       <p class="help">仅保存在本机浏览器，用于在账号凭据失效时兜底。不会写入服务器日志。</p>
     </div>
     <div class="field">
+      <label>多模型协作</label>
+      <label class="checkline"><input id="multiToggle" type="checkbox"> 同时调用豆包、千问复核法硕答案</label>
+      <p class="help">DeepSeek 负责主答和流式输出；填了 Key 的豆包/千问在后台并行作答，作为补充和交叉核对，不改变教材口径。</p>
+    </div>
+    <div class="field provider-field">
+      <label for="doubaoKey">豆包（火山方舟）API Key <small>（可选）</small></label>
+      <input id="doubaoKey" type="password" placeholder="方舟 API Key" autocomplete="off">
+      <input id="doubaoModel" class="model-input" placeholder="模型 / 接入点 ID，默认 doubao-seed-1-6-250615" autocomplete="off">
+    </div>
+    <div class="field provider-field">
+      <label for="qwenKey">千问（阿里云百炼）API Key <small>（可选）</small></label>
+      <input id="qwenKey" type="password" placeholder="DashScope API Key" autocomplete="off">
+      <input id="qwenModel" class="model-input" placeholder="模型名，默认 qwen-plus" autocomplete="off">
+    </div>
+    <div class="field">
       <label>回答长度</label>
       <div class="seg" id="modeSeg">
         <button type="button" data-mode="brief" class="active">简洁</button>
@@ -202,6 +217,6 @@
 </div>
 
 <div class="toast" id="toast" role="status"></div>
-<script type="module" src="./app.js?v=12"></script>
+<script type="module" src="./app.js?v=13"></script>
 </body>
 </html>
