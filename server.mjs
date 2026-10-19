@@ -1029,6 +1029,8 @@ function applySecurityHeaders(res) {
   res.setHeader('referrer-policy', 'no-referrer');
   res.setHeader('permissions-policy', 'camera=(), microphone=(self), geolocation=()');
   res.setHeader('cross-origin-opener-policy', 'same-origin');
+  res.setHeader('strict-transport-security', 'max-age=31536000; includeSubDomains');
+  res.setHeader('content-security-policy', "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; worker-src 'self' blob:; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
 }
 
 function adminPage() {
