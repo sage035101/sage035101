@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#f6f2e9">
-<title>Sage · 答疑平台</title>
+<title>Sage · 答疑服务</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23436554'/%3E%3Ctext x='32' y='44' font-size='36' text-anchor='middle' fill='%23f6f2e9' font-family='serif'%3E%E6%B3%95%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="./styles.css?v=14">
+<link rel="stylesheet" href="./styles.css?v=15">
 </head>
 <body>
 <header class="topbar">
@@ -17,11 +17,12 @@
     </span>
     <div class="brand-text">
       <strong>Sage</strong>
-      <span>答疑平台</span>
+      <span>答疑服务</span>
     </div>
   </div>
   <div class="blessing" aria-label="Sage 祝您心想事成！">Sage 祝您心想事成！</div>
   <div class="top-actions">
+    <span class="quota-pill" id="quotaPill" hidden></span>
     <button class="icon-btn" id="btnLibrary" title="资料库">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z"/><path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H20"/><path d="M8 7h8M8 11h5"/></svg>
       <span>资料库</span>
@@ -88,7 +89,7 @@
           <img id="welcomeLogo" src="./logo.png" alt="Sage" onload="this.parentElement.classList.add('has-logo')" onerror="this.style.display='none';this.parentElement.classList.remove('has-logo')">
           <span class="logo-fallback">法</span>
         </div>
-        <p class="eyebrow">SAGE · 答疑平台</p>
+        <p class="eyebrow">SAGE · 答疑服务</p>
         <p class="welcome-hint">直接输入问题，开始答疑</p>
       </section>
       <div class="messages" id="messages" aria-live="polite"></div>
@@ -139,6 +140,23 @@
   </form>
 </dialog>
 
+<dialog id="editDialog" class="dialog small">
+  <form method="dialog" class="dialog-card">
+    <div class="dialog-head">
+      <div><p class="eyebrow">EDIT</p><h2>修改问题</h2></div>
+      <button type="button" class="x" id="btnEditClose" aria-label="关闭">×</button>
+    </div>
+    <div class="field">
+      <textarea id="editText" rows="4" maxlength="4000" placeholder="修改错别字或表述"></textarea>
+      <p class="help">每条问题只能修改一次；这次修改不扣答疑次数。</p>
+    </div>
+    <div class="dialog-actions">
+      <span></span>
+      <button type="button" class="primary" id="btnEditSave">保存并重答</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="settingsDialog" class="dialog">
   <form method="dialog" class="dialog-card">
     <div class="dialog-head">
@@ -146,9 +164,9 @@
       <button class="x" value="close" aria-label="关闭">×</button>
     </div>
     <div class="field">
-      <label for="apiKey">DeepSeek API Key <small>（必填）</small></label>
-      <input id="apiKey" type="password" placeholder="sk-… 本站已关闭公共额度，请填自己的 Key" autocomplete="off">
-      <p class="help">本站不再使用站长的公共 DeepSeek 额度。Key 仅保存在本机浏览器，不会写入服务器日志；只用于你自己的提问。</p>
+      <label for="apiKey">DeepSeek API Key <small>（可选）</small></label>
+      <input id="apiKey" type="password" placeholder="sk-… 留空则使用站长授权额度" autocomplete="off">
+      <p class="help">站长密码和 6 位答疑密码登录时，留空即可使用站长授权额度；填了自己的 Key 则优先用你的。Key 只保存在本机浏览器。</p>
     </div>
     <div class="field">
       <label>多模型协作</label>
@@ -217,6 +235,6 @@
 </div>
 
 <div class="toast" id="toast" role="status"></div>
-<script type="module" src="./app.js?v=14"></script>
+<script type="module" src="./app.js?v=15"></script>
 </body>
 </html>
