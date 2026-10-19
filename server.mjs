@@ -11,7 +11,8 @@ const PUBLIC = path.join(ROOT, 'public');
 const DATA = path.join(ROOT, 'data');
 const KB_FILE = path.join(DATA, 'kb.jsonl');
 const UPLOAD_FILE = path.join(DATA, 'uploads.jsonl');
-const GUEST_FILE = path.join(DATA, 'guest_codes.json');
+const GUEST_FILE = process.env.GUEST_CODES_FILE || path.join(DATA, 'guest_codes.json');
+const GUEST_BAK = GUEST_FILE + '.bak';
 const CRED_FILE = 'C:/Users/39713/.dsh/.credentials.yaml';
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -26,15 +27,22 @@ const CLIENT_COOKIE = 'sage_client';
 const CLIENT_TTL = 365 * 86400 * 1000;
 const sessions = new Map();
 let guestCodes = new Map();
-try {
-  const raw = JSON.parse(fs.readFileSync(GUEST_FILE, 'utf8'));
-  guestCodes = new Map(Object.entries(raw || {}));
-} catch { /* first run */ }
+for (const file of [GUEST_FILE, GUEST_BAK]) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    guestCodes = new Map(Object.entries(raw || {}));
+    if (guestCodes.size) break;
+  } catch { /* try backup */ }
+}
 function saveGuestCodes() {
   try {
-    fs.mkdirSync(DATA, { recursive: true });
+    fs.mkdirSync(path.dirname(GUEST_FILE), { recursive: true });
     const obj = Object.fromEntries(guestCodes);
-    fs.writeFileSync(GUEST_FILE, JSON.stringify(obj, null, 2), 'utf8');
+    const body = JSON.stringify(obj, null, 2);
+    const tmp = GUEST_FILE + '.tmp';
+    fs.writeFileSync(tmp, body, 'utf8');
+    fs.renameSync(tmp, GUEST_FILE);
+    fs.writeFileSync(GUEST_BAK, body, 'utf8');
   } catch (e) { console.error('save guest codes', e); }
 }
 function guestQuota(session) {
@@ -851,7 +859,9 @@ async function handleChat(req, res, owner = '', session = null) {
   if (!query && !(lastUser?.images?.length)) return sendJson(res, 400, { error: '请输入问题' });
 
   const manageCmd = query.trim();
-  if (manageCmd === '/manage' || manageCmd === '/manage1') {
+  const isManageDelete = /^\/manage删除\s*[+＋]?\s*(\d{6})$/.test(manageCmd);
+  const isMasterViewCode = /^\d{6}$/.test(manageCmd) && session?.role === 'master';
+  if (manageCmd === '/manage' || manageCmd === '/manage1' || isManageDelete || isMasterViewCode) {
     res.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache, no-transform',
@@ -864,7 +874,26 @@ async function handleChat(req, res, owner = '', session = null) {
     };
     let answer;
     if (!session || session.role !== 'master') {
-      answer = '只有站长密码登录后，才能生成新的答疑密码。';
+      answer = isManageDelete
+        ? '只有站长密码登录后，才能删除答疑密码。'
+        : '只有站长密码登录后，才能生成新的答疑密码。';
+    } else if (isManageDelete) {
+      const code = manageCmd.match(/^\/manage删除\s*[+＋]?\s*(\d{6})$/)[1];
+      const rec = guestCodes.get(code);
+      if (!rec) {
+        answer = `密码 ${code} 不存在，或已经用完作废。`;
+      } else {
+        if (rec.activeSid) sessions.delete(rec.activeSid);
+        guestCodes.delete(code);
+        saveGuestCodes();
+        answer = `已永久删除答疑密码：${code}\n该密码立即失效，无法再登录；正在使用它的设备也会退出。`;
+      }
+    } else if (isMasterViewCode) {
+      const code = manageCmd;
+      const rec = guestCodes.get(code);
+      answer = rec
+        ? `答疑密码：${code}\n剩余次数：${Math.max(0, Number(rec.remaining) || 0)} 次\n类型：${rec.usesOwnerKey === false ? '使用者自带 DeepSeek Key' : '站长 DeepSeek 额度'}\n状态：${rec.activeSid ? '已有设备登录' : '尚未登录'}`
+        : `密码 ${code} 不存在，或已经用完作废。`;
     } else {
       const selfKey = manageCmd === '/manage1';
       const limit = selfKey ? 500 : 260;
@@ -882,6 +911,10 @@ async function handleChat(req, res, owner = '', session = null) {
     send('done', {});
     res.end();
     return;
+  }
+
+  if (session?.role === 'guest' && !guestCodes.has(session.code)) {
+    return sendJson(res, 403, { error: '这个 6 位密码的额度已用完并立即作废，请输入站长新生成的 6 位密码' });
   }
 
   let auth = authHeaders(req, session);
@@ -904,9 +937,14 @@ async function handleChat(req, res, owner = '', session = null) {
     const skip = String(req.headers['x-quota-skip'] || '') === '1';
     if (!skip) {
       rec.remaining = Math.max(0, Number(rec.remaining) - 1);
-      guestCodes.set(session.code, rec);
-      saveGuestCodes();
       quota = rec.remaining;
+      if (rec.remaining <= 0) {
+        guestCodes.delete(session.code);
+        saveGuestCodes();
+      } else {
+        guestCodes.set(session.code, rec);
+        saveGuestCodes();
+      }
     }
   }
 
@@ -1233,7 +1271,7 @@ const server = http.createServer(async (req, res) => {
         requireUserKey: false, accessGate: !!ACCESS_PASSWORD,
         role: session?.role || null,
         quota: session?.role === 'guest' ? guestQuota(session) : null,
-        usesOwnerKey: session?.role === 'guest' ? (guestCodes.get(session.code)?.usesOwnerKey !== false) : null,
+        usesOwnerKey: session?.role === 'guest' ? (guestCodes.get(session.code)?.usesOwnerKey ?? session.usesOwnerKey ?? true) : null,
         subjects: SUBJECTS.reduce((a, s) => (a[s] = docs.filter((d) => d.subject === s).length, a), {}),
         uploads: listUploads('').length,
       });
@@ -1244,7 +1282,7 @@ const server = http.createServer(async (req, res) => {
       if (!session) return sendJson(res, 401, { error: '需要登录' });
       return sendJson(res, 200, {
         ok: true, role: session.role, quota: session.role === 'guest' ? guestQuota(session) : null,
-        usesOwnerKey: session.role === 'guest' ? (guestCodes.get(session.code)?.usesOwnerKey !== false) : null,
+        usesOwnerKey: session.role === 'guest' ? (guestCodes.get(session.code)?.usesOwnerKey ?? session.usesOwnerKey ?? true) : null,
       });
     }
 
