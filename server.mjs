@@ -409,6 +409,65 @@ function authHeaders(req) {
   return { 'x-dsh-auth-token': token };
 }
 
+function peerConfig(req) {
+  const multi = String(req.headers['x-multi'] || '') === '1';
+  const model = (v, fallback) => {
+    const s = String(v || '').trim();
+    return /^[A-Za-z0-9._:-]{1,100}$/.test(s) ? s : fallback;
+  };
+  const doubaoKey = String(req.headers['x-doubao-key'] || process.env.DOUBAO_API_KEY || '').trim();
+  const qwenKey = String(req.headers['x-qwen-key'] || process.env.QWEN_API_KEY || '').trim();
+  const list = [];
+  if (doubaoKey) list.push({
+    id: 'doubao', label: '豆包',
+    key: doubaoKey,
+    model: model(req.headers['x-doubao-model'], 'doubao-seed-1-6-250615'),
+    url: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
+  });
+  if (qwenKey) list.push({
+    id: 'qwen', label: '千问',
+    key: qwenKey,
+    model: model(req.headers['x-qwen-model'], 'qwen-plus'),
+    url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+  });
+  return { multi, list: multi ? list : [] };
+}
+
+function toOpenAIMessages(messages) {
+  return messages.map((m) => {
+    const text = Array.isArray(m.content)
+      ? m.content.filter((b) => b && b.type === 'text').map((b) => String(b.text || '')).join('\n')
+      : String(m.content || '');
+    return { role: m.role, content: text.trim() };
+  }).filter((m) => m.content);
+}
+
+async function askPeer(peer, { system, messages }) {
+  const body = {
+    model: peer.model,
+    messages: [
+      { role: 'system', content: `${system}\n\n【协作身份】你是${peer.label}，作为独立复核老师回答同一个问题。用 300—600 字给出结论、要件和易错点；只依据教材和法硕口径，不引用资料编号，不编造案例；如果与主答可能不同，直接指出分歧。` },
+      ...toOpenAIMessages(messages),
+    ],
+    temperature: 0.2,
+    max_tokens: 1400,
+    stream: false,
+  };
+  const r = await fetch(peer.url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${peer.key}` },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(45000),
+  });
+  const text = await r.text();
+  if (!r.ok) throw new Error(`${peer.label} ${r.status}: ${text.slice(0, 180)}`);
+  let j;
+  try { j = JSON.parse(text); } catch { throw new Error(`${peer.label} 返回格式异常`); }
+  const answer = j.choices?.[0]?.message?.content;
+  if (!answer) throw new Error(`${peer.label} 没有返回内容`);
+  return String(answer).trim();
+}
+
 function buildMessages(history) {
   const out = [];
   for (const m of history) {
@@ -645,7 +704,9 @@ async function handleChat(req, res) {
   if (!query && !(lastUser?.images?.length)) return sendJson(res, 400, { error: '请输入问题' });
   const hasImages = !!(lastUser?.images?.length);
   let auth = authHeaders(req);
-  if (!auth) return sendJson(res, 401, { error: '未找到 DeepSeek 凭据，请在设置中填写 API Key' });
+  if (!auth) return sendJson(res, 401, { error: '未找到 DeepSeek 凭据，请在设置中填写 DeepSeek API Key' });
+  const peersCfg = peerConfig(req);
+  const peers = hasImages ? [] : peersCfg.list;
 
   // 图片题先做一次“只识别题目”的预检，再拿识别文本去检索教材，最后才作答。
   const visionText = hasImages ? await extractImageQuestion(auth, lastUser.images) : '';
@@ -702,7 +763,21 @@ async function handleChat(req, res) {
     if (res.writableEnded) return;
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
-  send('meta', { sources: [], model: MODEL });
+  send('meta', { sources: [], model: MODEL, peers: peers.map((p) => ({ id: p.id, label: p.label, status: 'pending' })) });
+
+  const peerDone = new Set();
+  const peerTasks = peers.map((peer) => (async () => {
+    try {
+      const answer = await askPeer(peer, { system, messages });
+      peerDone.add(peer.id);
+      send('peer', { id: peer.id, label: peer.label, status: 'done', text: answer });
+      return answer;
+    } catch (e) {
+      peerDone.add(peer.id);
+      send('peer', { id: peer.id, label: peer.label, status: 'error', error: e.name === 'TimeoutError' ? '协作超时' : '调用失败' });
+      return '';
+    }
+  })());
 
   const ac = new AbortController();
   let closed = false;
@@ -795,6 +870,15 @@ async function handleChat(req, res) {
       if (retried) checked = retried;
     }
     if (checked !== fullText) send('final', { text: checked });
+    if (peerTasks.length) {
+      await Promise.race([
+        Promise.allSettled(peerTasks),
+        new Promise((resolve) => setTimeout(resolve, 15000)),
+      ]);
+      for (const p of peers) {
+        if (!peerDone.has(p.id)) send('peer', { id: p.id, label: p.label, status: 'error', error: '协作超时' });
+      }
+    }
     rememberTurn(convId, lastUser?.id, query, `srv-ai-${Date.now()}`, checked || fullText);
     send('done', { usage });
   }
