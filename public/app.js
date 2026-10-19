@@ -19,6 +19,8 @@ const state = {
   multi: localStorage.getItem('sage_multi') !== '0',
   role: null,
   quota: null,
+  usesOwnerKey: null,
+  selfKeyNotice: false,
   conversations: [],
   currentId: null,
   messages: [],
@@ -776,9 +778,10 @@ async function send(opts = {}) {
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
       if (res.status === 401) { location.href = '/login?kicked=1'; }
-      if (res.status === 403 && typeof j.error === 'string' && j.error.includes('260')) {
+      if (res.status === 403 && typeof j.error === 'string' && j.error.includes('次数')) {
         state.quota = 0;
         renderQuota();
+        openRenew();
       }
       throw new Error(j.error || `请求失败（${res.status}）`);
     }
@@ -868,6 +871,7 @@ async function send(opts = {}) {
     saveState();
     renderHistory();
     scrollBottom();
+    if (state.role === 'guest' && state.quota === 0) setTimeout(openRenew, 350);
   }
 }
 
@@ -1029,6 +1033,37 @@ $('#messages').addEventListener('contextmenu', (e) => {
   openEdit(bubble.closest('.msg')?.dataset.id);
 });
 
+function openRenew() {
+  if (state.role !== 'guest') return;
+  if ($('#renewDialog').open) return;
+  $('#renewCode').value = '';
+  $('#renewDialog').showModal();
+  setTimeout(() => $('#renewCode').focus(), 80);
+}
+$('#quotaPill').addEventListener('click', () => { if (state.role === 'guest') openRenew(); });
+$('#btnRenewSave').addEventListener('click', async () => {
+  const code = $('#renewCode').value.trim();
+  if (!/^\d{6}$/.test(code)) { toast('请输入 6 位数字密码'); return; }
+  try {
+    const r = await fetch('/api/renew', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || '续用失败');
+    state.role = j.role;
+    state.quota = j.quota;
+    state.usesOwnerKey = j.usesOwnerKey;
+    state.selfKeyNotice = false;
+    $('#renewDialog').close();
+    renderQuota();
+    checkHealth();
+    toast(`已续用，余${j.quota}次`);
+    if (j.usesOwnerKey === false && !state.apiKey) toast('这个密码需要填写自己的 DeepSeek API Key');
+  } catch (e) {
+    toast(e.message || '续用失败');
+  }
+});
+$('#btnRenewClose').addEventListener('click', () => $('#renewDialog').close());
+$('#renewDialog').addEventListener('click', (e) => { if (e.target === $('#renewDialog')) $('#renewDialog').close(); });
+
 /* ---------------- subject ---------------- */
 $('#subjectBar').addEventListener('click', (e) => {
   const b = e.target.closest('[data-subject]');
@@ -1054,6 +1089,11 @@ async function loadSession() {
     const j = await r.json();
     state.role = j.role || null;
     state.quota = j.quota;
+    state.usesOwnerKey = j.usesOwnerKey;
+    if (state.role === 'guest' && j.usesOwnerKey === false && !state.apiKey && !state.selfKeyNotice) {
+      state.selfKeyNotice = true;
+      toast('这个密码需要填写自己的 DeepSeek API Key');
+    }
     renderQuota();
   } catch { /* network error: leave UI as-is */ }
 }
@@ -1069,6 +1109,12 @@ async function checkHealth() {
       status.classList.add('offline');
       txt.textContent = '需填写自己的 DeepSeek Key';
       box.innerHTML = `<span class="pulse"></span><span>本站已关闭公共额度：请在上方填写自己的 DeepSeek API Key</span>`;
+      return;
+    }
+    if (j.usesOwnerKey === false && !state.apiKey) {
+      status.classList.add('offline');
+      txt.textContent = '需填自己的 DeepSeek Key';
+      box.innerHTML = `<span class="pulse"></span><span>这个 6 位密码不能使用站长额度，请填自己的 DeepSeek API Key</span>`;
       return;
     }
     if (j.ok) {
