@@ -290,7 +290,7 @@ function cleanQuery(q) {
 }
 
 const answerCache = new Map();
-const ANSWER_CACHE_TTL = 10 * 60 * 1000;
+const ANSWER_CACHE_TTL = 6 * 60 * 60 * 1000;
 const ANSWER_CACHE_MAX = 120;
 
 function canonicalQuestion(q) {
