@@ -510,7 +510,7 @@ $('#attachments').addEventListener('click', (e) => {
 async function addFile(file) {
   if (!file || !file.type.startsWith('image/')) return;
   if (file.size > 12 * 1024 * 1024) return toast('图片超过 12MB，请压缩后再试');
-  if (state.pending.length >= 3) return toast('一次最多发送 3 张图片');
+  if (state.pending.length >= 5) return toast('一次最多发送 5 张图片');
   try {
     const bmp = await createImageBitmap(file);
     const max = 2200;
@@ -542,14 +542,14 @@ document.addEventListener('paste', (e) => {
   const imgs = [...(e.clipboardData?.items || [])].filter((i) => i.type.startsWith('image/'));
   if (imgs.length) {
     e.preventDefault();
-    imgs.slice(0, 3).forEach((i) => addFile(i.getAsFile()));
+    imgs.slice(0, 5).forEach((i) => addFile(i.getAsFile()));
   }
 });
 ['dragover', 'drop'].forEach((ev) => {
   document.addEventListener(ev, (e) => {
     if (ev === 'dragover') { e.preventDefault(); return; }
     const files = [...(e.dataTransfer?.files || [])].filter((f) => f.type.startsWith('image/'));
-    if (files.length) { e.preventDefault(); files.slice(0, 3).forEach(addFile); }
+    if (files.length) { e.preventDefault(); files.slice(0, 5).forEach(addFile); }
   });
 });
 
@@ -705,6 +705,10 @@ async function send(opts = {}) {
   const editMsg = opts.editMsg || null;
   const reuseMsg = opts.reuseMsg || null;
   const text = editMsg ? String(editMsg.text || '').trim() : reuseMsg ? String(reuseMsg.text || '').trim() : input.value.trim();
+  if (Array.from(text).length > 2500) {
+    toast(`单次输入不能超过 2500 字，当前 ${Array.from(text).length} 字`);
+    return;
+  }
   if (!text && !state.pending.length) { input.focus(); return; }
   const hasContext = state.messages.some((m) => m.role === 'assistant' && String(m.text || '').trim() && m !== reuseMsg);
   const imgs = editMsg || reuseMsg ? [] : state.pending.map((p) => p.full);
