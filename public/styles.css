@@ -184,6 +184,8 @@ svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke
 .msg.ai .bubble.streaming{border-color:var(--gold-2)}
 .msg.error .bubble{border-color:#e3b8b0;background:#fdf4f1}
 .msg.error .bubble p{color:var(--red);margin:0}
+.retry-btn{margin-top:8px;padding:5px 12px;border:1px solid #e3b8b0;border-radius:7px;color:var(--red);font-size:11px;background:#fff}
+.retry-btn:hover{background:#fdf4f1}
 
 /* markdown */
 .markdown>*:first-child{margin-top:0}
