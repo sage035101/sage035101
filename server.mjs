@@ -1028,6 +1028,20 @@ async function extractImageQuestion(auth, images) {
   }
 }
 
+// 普通 6 位密码用户要求恢复/重置/增加额度、次数时，直接拒绝，避免诱导模型改额度。
+// 只匹配“恢复类动作 + 额度类词”挨得很近的短句；正常法律问题里的“恢复原状”“犯罪次数”不会命中。
+const QUOTA_WORD = '(?:额度|次数|余额|配额|剩余次数|剩余额度|剩余配额|可用次数|可用额度|原有额度|原有次数|初始额度|初始次数|原来额度|原来次数|原本额度|原本次数|\\d{2,5}\\s*次)';
+const QUOTA_ACTION = '(?:恢复|重置|还原|回退|调回|改回|补回|复原|重设|刷新|清零|回满|补满|加回|加满|重新给|重新发放|再给|补上|补足|补到|恢复成|重置成|改成|修改|调整|设置|增加|提高|提升|减少|降低|续期|延长|扩容|回到|改到)';
+const QUOTA_RESTORE_FWD = new RegExp(`${QUOTA_ACTION}[^，。！？；\\n]{0,10}${QUOTA_WORD}`);
+const QUOTA_RESTORE_REV = new RegExp(`${QUOTA_WORD}[^，。！？；\\n]{0,10}${QUOTA_ACTION}`);
+const QUOTA_RESTORE_EN = /(?:reset|restore|refill|replenish|increase|raise|top\s*up|add|boost|extend)[a-z\s]{0,20}(?:quota|credits?|limit|uses?|balance|allowance)|(?:quota|credits?|limit|uses?|balance|allowance)[a-z\s]{0,20}(?:reset|restored|refilled|increased|raised|topped\s*up|extended)/i;
+function isQuotaRestoreRequest(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return false;
+  const compact = raw.replace(/\s+/g, '');
+  return QUOTA_RESTORE_FWD.test(compact) || QUOTA_RESTORE_REV.test(compact) || QUOTA_RESTORE_EN.test(raw);
+}
+
 // ---------- chat ----------
 async function handleChat(req, res, owner = '', session = null) {
   let body;
@@ -1142,6 +1156,34 @@ async function handleChat(req, res, owner = '', session = null) {
 
   if (session?.role === 'guest' && !guestCodes.has(session.code)) {
     return sendJson(res, 403, { error: '这个 6 位密码的额度已用完并立即作废，请输入站长新生成的 6 位密码' });
+  }
+
+  if (session?.role === 'guest' && isQuotaRestoreRequest(query)) {
+    const rec = guestCodes.get(session.code);
+    if (!rec || rec.activeSid !== session.id) {
+      return sendJson(res, 401, { error: '该密码已在另一台设备登录，本设备已退出' });
+    }
+    if (Number(rec.remaining) <= 0) {
+      return sendJson(res, 403, { error: '这个密码的答疑次数已用完' });
+    }
+    // 直接拒绝，不扣次数，也不进入模型/缓存。
+    res.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    });
+    const send = (event, data) => {
+      if (res.writableEnded) return;
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const text = '抱歉，无法完成该操作';
+    send('meta', { sources: [], model: MODEL, peers: [], quota: guestQuota(session) });
+    send('delta', { text });
+    send('final', { text });
+    send('done', {});
+    res.end();
+    return;
   }
 
   let auth = authHeaders(req, session);
