@@ -352,6 +352,10 @@ function formatMoney(n) {
   if (value > 0 && value < 1) return `¥${value.toFixed(3)}`;
   return `¥${value.toFixed(2)}`;
 }
+function codeHasBudget(rec) {
+  const limit = Math.max(0, Number(rec?.limit) || 0);
+  return limit > 0 && limit <= 260;
+}
 const clientIp = (req) => String(req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.socket?.remoteAddress || 'unknown').split(',')[0].trim();
 function rateLimit(key, limit, windowMs) {
   const t = nowMs();
@@ -1312,13 +1316,13 @@ async function handleChat(req, res, owner = '', session = null) {
       const code = manageCmd;
       const rec = guestCodes.get(code);
       answer = rec
-        ? `答疑密码：${code}\n剩余次数：${Math.max(0, Number(rec.remaining) || 0)} 次\n类型：${rec.usesOwnerKey === false ? '使用者自带 DeepSeek Key' : '站长 DeepSeek 额度'}\n状态：${rec.activeSid ? '已有设备登录' : '尚未登录'}\n已用预算：${formatMoney(rec.spent)}${CODE_BUDGET > 0 ? ` / ¥${CODE_BUDGET}` : ''}`
+        ? `答疑密码：${code}\n剩余次数：${Math.max(0, Number(rec.remaining) || 0)} 次\n类型：${rec.usesOwnerKey === false ? '使用者自带 DeepSeek Key' : '站长 DeepSeek 额度'}\n状态：${rec.activeSid ? '已有设备登录' : '尚未登录'}\n已用预算：${codeHasBudget(rec) && CODE_BUDGET > 0 ? `${formatMoney(rec.spent)} / ¥${CODE_BUDGET}` : `${formatMoney(rec.spent)}（无上限）`}`
         : `密码 ${code} 不存在，或已经用完作废。`;
     } else if (isManageExport) {
       const list = [...guestCodes.entries()].sort((a, b) => (a[1].createdAt || 0) - (b[1].createdAt || 0));
       answer = list.length
         ? `共 ${list.length} 个答疑密码：\n` + list.map(([code, rec]) =>
-          `${code}  剩余 ${Math.max(0, Number(rec.remaining) || 0)} 次  ${rec.usesOwnerKey === false ? '自带 Key' : '站长额度'}  ${rec.activeSid ? '已登录' : '未登录'}  已用 ${formatMoney(rec.spent)}${CODE_BUDGET > 0 ? ` / ¥${CODE_BUDGET}` : ''}`).join('\n')
+          `${code}  剩余 ${Math.max(0, Number(rec.remaining) || 0)} 次  ${rec.usesOwnerKey === false ? '自带 Key' : '站长额度'}  ${rec.activeSid ? '已登录' : '未登录'}  已用 ${codeHasBudget(rec) && CODE_BUDGET > 0 ? `${formatMoney(rec.spent)} / ¥${CODE_BUDGET}` : `${formatMoney(rec.spent)} / 不限`}`).join('\n')
         : '当前没有可用的答疑密码。';
     } else if (isManageImport) {
       const bodyText = manageCmd.replace(/^\/manage导入\s*/, '');
@@ -1378,7 +1382,7 @@ async function handleChat(req, res, owner = '', session = null) {
       do { code = String(crypto.randomInt(100000, 1000000)); } while (guestCodes.has(code));
       guestCodes.set(code, { remaining: limit, limit, spent: 0, activeSid: null, createdAt: nowMs(), usesOwnerKey: !selfKey });
       await saveGuestCodes();
-      const budgetLine = CODE_BUDGET > 0 ? `\n\n单码预算上限：¥${CODE_BUDGET}；达到后停止回答，剩余次数不扣。` : '';
+      const budgetLine = CODE_BUDGET > 0 && limit <= 260 ? `\n\n单码预算上限：¥${CODE_BUDGET}；达到后停止回答，剩余次数不扣。` : '';
       if (isTempCode) {
         answer = `已生成临时答疑密码：${code}\n\n剩余答疑次数：25 次\n类型：站长 DeepSeek 额度\n使用规则：单次临时密码，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。${budgetLine}`;
       } else if (selfKey) {
@@ -1468,8 +1472,8 @@ async function handleChat(req, res, owner = '', session = null) {
     const rec = guestCodes.get(session.code);
     if (!rec || rec.activeSid !== session.id) return sendJson(res, 401, { error: '该密码已在另一台设备登录，本设备已退出' });
     if (Number(rec.remaining) <= 0) return sendJson(res, 403, { error: '这个密码的答疑次数已用完' });
-    if (CODE_BUDGET > 0 && Number(rec.spent || 0) + CODE_BUDGET_RESERVE > CODE_BUDGET) {
-      return sendJson(res, 403, { error: `这个密码的 ${CODE_BUDGET} 元预算已用完，请联系站长换新密码` });
+    if (CODE_BUDGET > 0 && codeHasBudget(rec) && Number(rec.spent || 0) + CODE_BUDGET_RESERVE > CODE_BUDGET) {
+      return sendJson(res, 403, { error: 'sorry' });
     }
     const skip = String(req.headers['x-quota-skip'] || '') === '1';
     if (!skip) {
