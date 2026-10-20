@@ -26,24 +26,129 @@ const SESSION_COOKIE = 'sage_session';
 const CLIENT_COOKIE = 'sage_client';
 const CLIENT_TTL = 365 * 86400 * 1000;
 const sessions = new Map();
+const UPSTASH_URL = String(process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/+$/, '');
+const UPSTASH_TOKEN = String(process.env.UPSTASH_REDIS_REST_TOKEN || '');
+const REMOTE_CODES = !!(UPSTASH_URL && UPSTASH_TOKEN);
+const REMOTE_CODES_KEY = process.env.GUEST_CODES_KEY || 'sage:guest_codes:v1';
 let guestCodes = new Map();
-for (const file of [GUEST_FILE, GUEST_BAK]) {
-  try {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-    guestCodes = new Map(Object.entries(raw || {}));
-    if (guestCodes.size) break;
-  } catch { /* try backup */ }
+let saveQueue = Promise.resolve();
+
+// 远程持久化只保存"密码记录"本身；修改密码、登录、扣次数都会写回 Upstash。
+// 本地文件保留为断网/Upstash 故障时的兜底，逻辑与旧版一致。
+function sanitizeGuestCodes(input) {
+  const out = new Map();
+  if (!input || typeof input !== 'object') return out;
+  for (const [code, rec] of Object.entries(input)) {
+    if (!/^\d{6}$/.test(code) || !rec || typeof rec !== 'object') continue;
+    const remaining = Math.max(0, Math.floor(Number(rec.remaining) || 0));
+    out.set(code, {
+      remaining,
+      limit: Math.max(remaining, Math.floor(Number(rec.limit) || remaining)),
+      activeSid: null,
+      createdAt: Number(rec.createdAt) || nowMs(),
+      usesOwnerKey: rec.usesOwnerKey !== false,
+    });
+  }
+  return out;
 }
-function saveGuestCodes() {
+function loadGuestCodesLocal() {
+  for (const file of [GUEST_FILE, GUEST_BAK]) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+      guestCodes = sanitizeGuestCodes(raw);
+      if (guestCodes.size) return true;
+    } catch { /* try backup */ }
+  }
+  return false;
+}
+async function remoteGetCodes() {
+  if (!REMOTE_CODES) return null;
+  const res = await fetch(`${UPSTASH_URL}/get/${encodeURIComponent(REMOTE_CODES_KEY)}`, {
+    headers: { authorization: `Bearer ${UPSTASH_TOKEN}` },
+    signal: AbortSignal.timeout(6000),
+  });
+  if (!res.ok) throw new Error(`upstash get ${res.status}`);
+  const body = await res.json().catch(() => null);
+  return body && body.result != null ? String(body.result) : null;
+}
+async function remoteSetCodes(payload) {
+  if (!REMOTE_CODES) return;
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`${UPSTASH_URL}/set/${encodeURIComponent(REMOTE_CODES_KEY)}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${UPSTASH_TOKEN}`,
+          'content-type': 'text/plain; charset=utf-8',
+        },
+        body: payload,
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) throw new Error(`upstash set ${res.status}`);
+      const body = await res.json().catch(() => null);
+      if (body && body.result !== 'OK') throw new Error(`upstash set rejected: ${String(body.result).slice(0, 40)}`);
+      return;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 1) await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+  throw lastErr;
+}
+function serializeGuestCodes() {
+  return JSON.stringify({
+    v: 1,
+    updatedAt: nowMs(),
+    codes: Object.fromEntries(guestCodes),
+  });
+}
+function saveGuestCodesLocal() {
   try {
     fs.mkdirSync(path.dirname(GUEST_FILE), { recursive: true });
-    const obj = Object.fromEntries(guestCodes);
-    const body = JSON.stringify(obj, null, 2);
+    const body = JSON.stringify(Object.fromEntries(guestCodes), null, 2);
     const tmp = GUEST_FILE + '.tmp';
     fs.writeFileSync(tmp, body, 'utf8');
     fs.renameSync(tmp, GUEST_FILE);
     fs.writeFileSync(GUEST_BAK, body, 'utf8');
-  } catch (e) { console.error('save guest codes', e); }
+  } catch (e) { console.error('save guest codes local', e.message); }
+}
+function saveGuestCodes() {
+  saveGuestCodesLocal();
+  if (!REMOTE_CODES) return Promise.resolve();
+  const payload = serializeGuestCodes();
+  saveQueue = saveQueue
+    .then(() => remoteSetCodes(payload))
+    .catch((e) => console.error('save guest codes remote', e.message));
+  return saveQueue;
+}
+async function initGuestCodes() {
+  loadGuestCodesLocal();
+  if (!REMOTE_CODES) return;
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const raw = await remoteGetCodes();
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const codes = parsed && typeof parsed === 'object' && parsed.codes ? parsed.codes : parsed;
+        guestCodes = sanitizeGuestCodes(codes);
+        console.log(`guest codes: loaded ${guestCodes.size} from upstash`);
+        saveGuestCodesLocal();
+      } else {
+        console.log('guest codes: upstash empty, seeding from local file');
+        saveGuestCodesLocal();
+        await remoteSetCodes(serializeGuestCodes());
+      }
+      return;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+    }
+  }
+  // 读不到远端时宁可让本次启动失败，也不能用空内存覆盖远端已有密码。
+  console.error('guest codes: upstash load failed, refusing to start:', lastErr?.message || lastErr);
+  process.exit(1);
 }
 function guestQuota(session) {
   if (!session || session.role !== 'guest') return null;
@@ -939,8 +1044,10 @@ async function handleChat(req, res, owner = '', session = null) {
   const manageCmd = query.trim();
   const isTempCode = manageCmd === '临时111';
   const isManageDelete = /^\/manage删除\s*[+＋]?\s*(\d{6})$/.test(manageCmd);
+  const isManageImport = manageCmd.startsWith('/manage导入');
+  const isManageExport = manageCmd === '/manage导出';
   const isMasterViewCode = /^\d{6}$/.test(manageCmd) && session?.role === 'master';
-  if (manageCmd === '/manage' || manageCmd === '/manage1' || isTempCode || isManageDelete || isMasterViewCode) {
+  if (manageCmd === '/manage' || manageCmd === '/manage1' || isTempCode || isManageDelete || isManageImport || isManageExport || isMasterViewCode) {
     res.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache, no-transform',
@@ -955,7 +1062,9 @@ async function handleChat(req, res, owner = '', session = null) {
     if (!session || session.role !== 'master') {
       answer = isManageDelete
         ? '只有站长密码登录后，才能删除答疑密码。'
-        : '只有站长密码登录后，才能生成新的答疑密码。';
+        : isManageImport || isManageExport
+          ? '只有站长密码登录后，才能导入或导出答疑密码。'
+          : '只有站长密码登录后，才能生成新的答疑密码。';
     } else if (isManageDelete) {
       const code = manageCmd.match(/^\/manage删除\s*[+＋]?\s*(\d{6})$/)[1];
       const rec = guestCodes.get(code);
@@ -964,7 +1073,7 @@ async function handleChat(req, res, owner = '', session = null) {
       } else {
         if (rec.activeSid) sessions.delete(rec.activeSid);
         guestCodes.delete(code);
-        saveGuestCodes();
+        await saveGuestCodes();
         answer = `已永久删除答疑密码：${code}\n该密码立即失效，无法再登录；正在使用它的设备也会退出。`;
       }
     } else if (isMasterViewCode) {
@@ -973,13 +1082,48 @@ async function handleChat(req, res, owner = '', session = null) {
       answer = rec
         ? `答疑密码：${code}\n剩余次数：${Math.max(0, Number(rec.remaining) || 0)} 次\n类型：${rec.usesOwnerKey === false ? '使用者自带 DeepSeek Key' : '站长 DeepSeek 额度'}\n状态：${rec.activeSid ? '已有设备登录' : '尚未登录'}`
         : `密码 ${code} 不存在，或已经用完作废。`;
+    } else if (isManageExport) {
+      const list = [...guestCodes.entries()].sort((a, b) => (a[1].createdAt || 0) - (b[1].createdAt || 0));
+      answer = list.length
+        ? `共 ${list.length} 个答疑密码：\n` + list.map(([code, rec]) =>
+          `${code}  剩余 ${Math.max(0, Number(rec.remaining) || 0)} 次  ${rec.usesOwnerKey === false ? '自带 Key' : '站长额度'}  ${rec.activeSid ? '已登录' : '未登录'}`).join('\n')
+        : '当前没有可用的答疑密码。';
+    } else if (isManageImport) {
+      const bodyText = manageCmd.replace(/^\/manage导入\s*/, '');
+      const lines = bodyText.split(/[\n\r；;]+/).map((s) => s.trim()).filter(Boolean);
+      const imported = [];
+      for (const line of lines) {
+        const codeMatch = line.match(/^(\d{6})\b/);
+        if (!codeMatch) continue;
+        const code = codeMatch[1];
+        const rest = line.slice(codeMatch[0].length);
+        const numMatch = rest.match(/(\d{1,7})/);
+        if (!numMatch) continue;
+        const remaining = Math.max(0, Math.min(1000000, Number(numMatch[1]) || 0));
+        const usesOwnerKey = !/(自带|own|self)/i.test(rest);
+        const old = guestCodes.get(code);
+        guestCodes.set(code, {
+          remaining,
+          limit: old ? Math.max(Number(old.limit) || remaining, remaining) : remaining,
+          activeSid: old?.activeSid || null,
+          createdAt: old?.createdAt || nowMs(),
+          usesOwnerKey,
+        });
+        imported.push(`${code}  剩余 ${remaining} 次  ${usesOwnerKey ? '站长额度' : '自带 Key'}`);
+      }
+      if (imported.length) {
+        await saveGuestCodes();
+        answer = `已导入 ${imported.length} 个答疑密码：\n${imported.join('\n')}\n\n导入只恢复密码和剩余次数，不改变现有额度规则。`;
+      } else {
+        answer = '没有识别到可导入的密码。格式示例：\n/manage导入 123456 210\n/manage导入 123456 210 own\n每行一个；own 表示该密码需要使用者自带 DeepSeek Key。';
+      }
     } else {
       const selfKey = manageCmd === '/manage1';
       const limit = isTempCode ? 25 : selfKey ? 500 : 260;
       let code;
       do { code = String(crypto.randomInt(100000, 1000000)); } while (guestCodes.has(code));
       guestCodes.set(code, { remaining: limit, limit, activeSid: null, createdAt: nowMs(), usesOwnerKey: !selfKey });
-      saveGuestCodes();
+      await saveGuestCodes();
       if (isTempCode) {
         answer = `已生成临时答疑密码：${code}\n\n剩余答疑次数：25 次\n类型：站长 DeepSeek 额度\n使用规则：单次临时密码，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。`;
       } else if (selfKey) {
@@ -1029,10 +1173,10 @@ async function handleChat(req, res, owner = '', session = null) {
       quota = rec.remaining;
       if (rec.remaining <= 0) {
         guestCodes.delete(session.code);
-        saveGuestCodes();
+        await saveGuestCodes();
       } else {
         guestCodes.set(session.code, rec);
-        saveGuestCodes();
+        await saveGuestCodes();
       }
     }
   }
@@ -1113,13 +1257,13 @@ async function handleChat(req, res, owner = '', session = null) {
     return;
   }
 
-  const refundQuota = () => {
+  const refundQuota = async () => {
     if (!quotaCharged || !session || session.role !== 'guest' || quotaBefore == null) return;
     const rec = guestCodes.get(session.code) || { ...(quotaRecord || {}), activeSid: session.id };
     rec.remaining = quotaBefore;
     rec.activeSid = session.id;
     guestCodes.set(session.code, rec);
-    saveGuestCodes();
+    await saveGuestCodes();
     quota = quotaBefore;
     send('quota', { quota });
   };
@@ -1157,7 +1301,7 @@ async function handleChat(req, res, owner = '', session = null) {
       signal: ac.signal,
     });
   } catch (e) {
-    refundQuota();
+    await refundQuota();
     if (!closed) send('error', { message: '连接 DeepSeek 失败，本次不扣次数，请稍后重试。' });
     res.end();
     return;
@@ -1166,7 +1310,7 @@ async function handleChat(req, res, owner = '', session = null) {
   if (!upstream.ok) {
     let detail = '';
     try { detail = await upstream.text(); } catch {}
-    refundQuota();
+    await refundQuota();
     let msg = `DeepSeek 返回 ${upstream.status}`;
     if (upstream.status === 401) msg = 'DeepSeek 凭据失效，请在右上角“设置”中填写 API Key。';
     else if (upstream.status === 402) msg = 'DeepSeek 账户额度不足。';
@@ -1219,7 +1363,7 @@ async function handleChat(req, res, owner = '', session = null) {
       }
     }
   } catch (e) {
-    refundQuota();
+    await refundQuota();
     if (!closed) send('error', { message: '生成中断，本次不扣次数，请重试。' });
   }
   if (!closed) {
@@ -1228,7 +1372,7 @@ async function handleChat(req, res, owner = '', session = null) {
       .replace(/[ \t]{2,}/g, ' ')
       .trim();
     if (!checked) {
-      refundQuota();
+      await refundQuota();
       send('error', { message: '没有收到有效回答，本次不扣次数，请重试。' });
       res.end();
       return;
@@ -1369,7 +1513,7 @@ const server = http.createServer(async (req, res) => {
         rec.activeSid = created.sid;
         rec.lastLogin = nowMs();
         guestCodes.set(input, rec);
-        saveGuestCodes();
+        await saveGuestCodes();
         return sendJson(res, 200, { ok: true, role: 'guest', quota: Number(rec.remaining), usesOwnerKey: rec.usesOwnerKey !== false });
       }
       return sendJson(res, 401, { error: '密码不正确' });
@@ -1398,7 +1542,7 @@ const server = http.createServer(async (req, res) => {
       rec.activeSid = created.sid;
       rec.lastLogin = nowMs();
       guestCodes.set(code, rec);
-      saveGuestCodes();
+      await saveGuestCodes();
       return sendJson(res, 200, {
         ok: true, role: 'guest', quota: Number(rec.remaining),
         usesOwnerKey: rec.usesOwnerKey !== false,
@@ -1454,6 +1598,7 @@ const server = http.createServer(async (req, res) => {
         uploads: listUploads(owner).length, accessGate: !!ACCESS_PASSWORD,
         requireUserKey: false, role: info?.role || null,
         quota: info?.role === 'guest' ? guestQuota(info) : null,
+        codes: guestCodes.size, store: REMOTE_CODES ? 'upstash' : 'file',
         owner: owner ? owner.slice(0, 8) + '…' : '',
         uptime: Math.round(process.uptime()), node: process.version, env: process.env.NODE_ENV || 'production',
       });
@@ -1478,6 +1623,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 rebuildIndex();
+await initGuestCodes();
 server.listen(PORT, HOST, () => {
   console.log(`Sage法硕答疑 running at http://127.0.0.1:${PORT}`);
   for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
