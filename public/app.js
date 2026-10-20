@@ -1060,7 +1060,14 @@ function openRenew() {
   $('#renewDialog').showModal();
   setTimeout(() => $('#renewCode').focus(), 80);
 }
-$('#quotaPill').addEventListener('click', () => { if (state.role === 'guest') openRenew(); });
+$('#quotaPill').addEventListener('click', () => {
+  if (state.role !== 'guest') return;
+  if (Number(state.quota) > 0) {
+    toast(`当前还有 ${state.quota} 次，余额没有用完`);
+    return;
+  }
+  openRenew();
+});
 $('#btnRenewSave').addEventListener('click', async () => {
   const code = $('#renewCode').value.trim();
   if (!/^\d{6}$/.test(code)) { toast('请输入 6 位数字密码'); return; }
