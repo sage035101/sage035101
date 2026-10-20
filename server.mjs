@@ -282,14 +282,27 @@ function tokenize(text) {
 function cleanQuery(q) {
   return String(q || '')
     .replace(/[（(]\s*[）)]/g, ' ')
+    .replace(/异同点?|相同点?和?不同点?|对比|比较|区别与联系|区别和联系|联系与区别|联系和区别|辨析|区分/g, ' 比较 异同 ')
+    .replace(/构成要件|成立条件|成立要件/g, ' 构成要件 ')
     .replace(/下列|哪一|哪项|哪个|说法|表述|选项|正确的是|错误的是|不正确的是|关于|请|问一下|如何理解|怎么理解|是什么|有哪些/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
+const answerCache = new Map();
+const ANSWER_CACHE_TTL = 10 * 60 * 1000;
+const ANSWER_CACHE_MAX = 120;
+
+function canonicalQuestion(q) {
+  return cleanQuery(q)
+    .replace(/的/g, '')
+    .replace(/与|及|跟/g, '和')
+    .replace(/[？?！!。；;：:，,、\s]/g, '')
+    .toLowerCase();
+}
+
 const SYNONYMS = {
-  '帮信': ['帮助信息网络犯罪活动罪', '明知', '支付结算', '情节严重'],
-  '掩隐': ['掩饰、隐瞒犯罪所得', '犯罪所得', '转移', '收购'],
+  '帮信': ['帮助信息网络犯罪活动罪', '明知', '支付结算', '情节严重'],  '掩隐': ['掩饰、隐瞒犯罪所得', '犯罪所得', '转移', '收购'],
   '诈骗共犯': ['诈骗罪', '共同犯罪', '帮助犯', '明知'],
   '正当防卫': ['特殊防卫', '防卫过当', '不法侵害', '紧迫'],
   '紧急避险': ['危险', '不得已', '超过必要限度'],
@@ -315,6 +328,9 @@ const SYNONYMS = {
   '犯罪未遂': ['已经着手', '意志以外', '未得逞'],
   '想象竞合': ['一行为', '数个罪名', '从一重'],
   '法条竞合': ['特别法', '普通法', '特别关系'],
+  '异同': ['相同点', '不同点', '区别', '联系', '比较'],
+  '对比': ['相同点', '不同点', '区别', '联系', '比较'],
+  '构成要件': ['成立条件', '成立要件', '要件', '要素'],
 };
 
 const SUBJECT_WORDS = {
@@ -372,6 +388,22 @@ function validateCitations(text, sources) {
 
 function looksLikeContextRefusal(text) {
   return /(看不到|看不见|没有看到).{0,12}(上一条|上一答|追问|回答|上下文)|只看到.{0,12}(四个字|几个字|这句话)|不知道你.{0,6}(问|指|说).{0,4}哪|没有(对话)?上下文|无法(看到|获取).{0,6}(上文|历史)/.test(String(text || ''));
+}
+
+function stripMetaAttribution(text) {
+  let out = String(text || '').trim();
+  const lead = /^\s*(?:\*\*)?\s*(?:(?:根据|依据|按照|从)\s*)?(?:你(?:上传|提供|发)的|你发的|材料|参考材料|参考资料|视频|字幕|PDF|资料)[^。\n]{0,120}[，,：:。]\s*/u;
+  for (let i = 0; i < 2; i++) {
+    const next = out.replace(lead, '');
+    if (next === out) break;
+    out = next.trim();
+  }
+  // Remove standalone attribution sentences such as
+  // “这是车润海老师《刑法速记口诀》中……的原文。”
+  out = out.replace(/(?:^|\n)[^\n。！？]{0,140}(?:你上传的|你提供的|你发的|参考材料|参考资料|材料里|材料中|视频里|字幕|PDF|《[^》]*(?:口诀|速记)[^》]*》)[^\n。！？]{0,140}(?:原文|内容|资料|显示|提到|写道|来自|出自)[^\n。！？]{0,20}[。！？]?/gu, '\n');
+  out = out.replace(/(?:^|\n)\s*《[^》]*(?:口诀|速记)[^》]*》[^\n。！？]{0,100}[。！？]?/gu, '\n');
+  out = out.replace(/\n{3,}/g, '\n\n').trim();
+  return out || String(text || '').trim();
 }
 
 async function retryForContext({ system, messages, auth, contextBrief }) {
@@ -707,13 +739,20 @@ ${contextBrief || ''}
 3. 材料没有检索到该口诀原文时，明确写“这轮材料未检索到该口诀原文”，再按教材逻辑讲；不得凭记忆冒充车润海原话，也不得把其他老师或法考口诀混进来。
 4. 用户只要口诀时，先给完整口诀，再解释；不要用大段理论淹没口诀本身。
 5. 材料中没有老师原口诀时，**不得自创口诀、顺口溜或“我帮你归纳”的口诀**；直接用教材逻辑分点讲清区别和判断顺序。只有材料明确是老师口诀时才引用原文。
-6. 用户上传的《刑法速记口诀》《宪法学口诀》属于用户提供的口诀资料，涉及口诀、记忆、背诵时优先检索；引用其中的口诀要保持原文，不得自行改编。若与教材/车润海课程冲突，先按教材/课程主线，再说明差异。
+6. 只要本题材料中有对应口诀，**正文第一行必须先给口诀本身**（写成“口诀：…”），不要先写结论、出处、引入或“根据…”；给完口诀再逐词、要件、例外和易错点。用户问的是构成要件、异同、区别，也按这个顺序。
+7. 用户上传的《刑法速记口诀》《宪法学口诀》属于用户提供的口诀资料，涉及口诀、记忆、背诵时优先检索；引用其中的口诀要保持原文，不得自行改编。若与教材/车润海课程冲突，先按教材/课程主线，再说明差异。
 
 【科目与检索】
 1. 用户选择具体科目（刑法/民法/法理/宪法/法制史）时，只依据该科目及其官方资料回答，不要混入其他科目内容。
 2. 用户选择“全部”时，先判断问题涉及哪些科目，再综合调用全部相关资料；跨科目问题可以同时使用多个科目材料。
 3. 科目判断不确定时，优先按题干中的部门法、罪名、制度关键词判断，不要只凭题目标题。
 4. 具体科目下检索不到足够材料时，可以按该科目基本原理推导，但要说明是原理分析，不要伪造教材内容。
+
+【表达与等价问题】
+1. 回答正文开头和段落中不得出现“根据你上传的《……》”“你提供的资料”“材料里”“参考材料”“视频里”“字幕”“PDF”“资料显示”等出处提示；直接给结论、口诀和解释。只有用户明确问“来源/出处/原文/根据什么”时才说明。
+2. “异同、对比、比较、区别、联系、辨析、区分”视为同一类比较题；同一个法律问题要用同一套结论、同一套结构和同一个口诀，不能因为措辞不同就换口诀或换答案。
+3. “构成要件、成立条件、成立要件”视为同一个问题；“怎么区分、区别是什么、异同”按同一争点处理。先识别实质问题，不要死抠字眼。
+4. 同一考点的口诀一旦从资料中确认，换一种问法也要保持一致；不要每次重新编一套。
 
 【官方案例与司法解释】
 1. 官方材料分三类：最高法指导性案例（裁判要点）、最高检指导性案例（仅索引）、最高法/最高检司法解释（仅索引）。索引材料只能用于核对名称、案号和链接，不能当条文原文引用。
@@ -1057,7 +1096,21 @@ async function handleChat(req, res, owner = '', session = null) {
     if (res.writableEnded) return;
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
-  send('meta', { sources: [], model: MODEL, peers: peers.map((p) => ({ id: p.id, label: p.label, status: 'pending' })), quota });
+  const cacheable = !hasImages && history.length <= 1 && !!query;
+  const cacheKey = cacheable ? `${subject}|${mode}|${canonicalQuestion(query)}` : '';
+  let cached = cacheKey ? answerCache.get(cacheKey) : null;
+  if (cached && Date.now() - cached.at > ANSWER_CACHE_TTL) {
+    answerCache.delete(cacheKey);
+    cached = null;
+  }
+  send('meta', { sources: [], model: MODEL, peers: cached ? [] : peers.map((p) => ({ id: p.id, label: p.label, status: 'pending' })), quota });
+  if (cached) {
+    send('delta', { text: cached.text });
+    send('final', { text: cached.text });
+    send('done', { usage: null });
+    res.end();
+    return;
+  }
 
   const refundQuota = () => {
     if (!quotaCharged || !session || session.role !== 'guest' || quotaBefore == null) return;
@@ -1183,6 +1236,9 @@ async function handleChat(req, res, owner = '', session = null) {
       const retried = await retryForContext({ system, messages, auth, contextBrief });
       if (retried) checked = retried;
     }
+    if (!/来源|出处|原文|根据什么|依据什么|哪本书|哪个文件|引用哪里|参考哪里/.test(effectiveQuery)) {
+      checked = stripMetaAttribution(checked);
+    }
     if (checked !== fullText) send('final', { text: checked });
     if (peerTasks.length) {
       await Promise.race([
@@ -1194,6 +1250,13 @@ async function handleChat(req, res, owner = '', session = null) {
       }
     }
     rememberTurn(convId, lastUser?.id, query, `srv-ai-${Date.now()}`, checked || fullText);
+    if (cacheKey && checked) {
+      answerCache.set(cacheKey, { text: checked, at: Date.now() });
+      if (answerCache.size > ANSWER_CACHE_MAX) {
+        const first = answerCache.keys().next().value;
+        if (first) answerCache.delete(first);
+      }
+    }
     send('done', { usage });
   }
   res.end();
