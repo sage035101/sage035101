@@ -409,6 +409,9 @@ function sourceWeight(doc, query) {
   const mnemonic = /口诀|记忆|背诵|带背|车润海|视频|课程|逻辑|方法/.test(query);
   if (doc.source.includes('精讲一本通')) w += mnemonic ? 0.22 : 0.12;
   if (doc.source.includes('B站2027课程')) w += mnemonic ? 0.42 : 0.12;
+  if (doc.source.includes('指导性案例')) w += /指导性案例|类似|相似|案例|案号|检例/.test(query) ? 0.38 : -0.16;
+  if (doc.source.includes('司法解释')) w += /司法解释|法释|条文|解释/.test(query) ? 0.22 : -0.12;
+  if (doc.source.includes('官方索引')) w -= 0.05;
   if (doc.source.includes('刑法学（95）')) w -= 0.12;
   if (doc.source.includes('母子题')) w += 0.06;
   if (/案例|题目|真题|分析|判断|选择/.test(query) && /母子题|解析/.test(doc.source)) w += 0.18;
@@ -667,7 +670,12 @@ function buildSystemPrompt({ subject, mode, sources, contextBrief, sourceChars =
     : '简洁模式：总长 350—700 字，能一句说清就不写三句。';
   const material = sources.length
     ? sources.map((s) => {
-        const loc = String(s.source).includes('B站2027课程') ? `视频第${s.page}讲` : `PDF第${s.page}页`;
+        let loc;
+        if (String(s.source).includes('B站2027课程')) loc = `视频第${s.page}讲`;
+        else if (String(s.source).includes('最高法指导性案例')) loc = '最高法指导性案例';
+        else if (String(s.source).includes('最高检指导性案例')) loc = '最高检指导性案例';
+        else if (String(s.source).includes('司法解释')) loc = '司法解释官方索引';
+        else loc = `PDF第${s.page}页`;
         return `〔资料${s.n}〕${s.title}｜${loc}\n${String(s.text).slice(0, sourceChars)}`;
       }).join('\n\n')
     : '（本轮没有检索到直接相关的资料。不要因此拒答：先用你自己的法律分析搭框架，再说明哪些属于通行理解。）';
@@ -697,6 +705,14 @@ ${contextBrief || ''}
 2. 口诀原文必须保持词序、词数和结构，只允许把明显的同音错字改成教材术语；不得改写、增删、换顺序，也不得用相近口诀替代。
 3. 材料没有检索到该口诀原文时，明确写“这轮材料未检索到该口诀原文”，再按教材逻辑讲；不得凭记忆冒充车润海原话，也不得把其他老师或法考口诀混进来。
 4. 用户只要口诀时，先给完整口诀，再解释；不要用大段理论淹没口诀本身。
+
+【官方案例与司法解释】
+1. 官方材料分三类：最高法指导性案例（裁判要点）、最高检指导性案例（仅索引）、最高法/最高检司法解释（仅索引）。索引材料只能用于核对名称、案号和链接，不能当条文原文引用。
+2. 用户问“这个案件有没有相似的指导性案例 / 最高法最高检有没有类似案例”时，只从“最高法指导性案例”“最高检指导性案例”材料中找；找到就给 **指导性案例编号 / 检例编号 + 官方链接**，可简要说明相似点；没有就明确说“没有找到相似的指导性案例”。不得编造案号、案名、链接，也不得拿普通案例冒充指导性案例。
+3. 材料中标注“引用限制：未经授权不得转载、摘编或建立镜像”的（主要是最高检页面），**不得引用原文、不得逐字复述**；改用教材/讲义表述回答。不要向用户解释“我没有引用”“有版权风险”“不能转载”，直接自然作答即可。
+4. 标题含“修改决定”“废止”“失效”的文件，以及旧版本，不得作为现行有效司法解释引用；不要把它们混入现行规则。
+5. 司法解释索引只用于确认名称、文号和链接；具体答题仍以教材/课程口径为主，索引不能替代条文。
+6. 用户明确要求来源或链接时，给出官方链接；这是答案内容，不是来源列表。其他情况下不要附来源列表。
 
 【准确性红线】
 1. 不得编造法条、司法解释、案例、页码、真题年份。记不清条文号时，只写规范名称，不写条号。
@@ -984,15 +1000,16 @@ async function handleChat(req, res, owner = '', session = null) {
     ? [...prevUsers.slice(-2), effectiveQuery].join(' ')
     : effectiveQuery;
   const isMnemonic = /口诀|记忆|背诵|带背|车润海|视频|课程|逻辑|方法/.test(effectiveQuery);
-  const isComplex = mode === 'detail' || isMnemonic || effectiveQuery.length > 60 ||
+  const isCaseLookup = /指导性案例|类似|相似|案例|案号|检例/.test(effectiveQuery);
+  const isComplex = mode === 'detail' || isMnemonic || isCaseLookup || effectiveQuery.length > 60 ||
     /比较|分析|论述|评价|为什么|如何|区别|联系|观点|案例|计算|推理|判断顺序|展开|详细|教材|法硕|司法解释|指导性/.test(effectiveQuery);
-  const sources = retrievalQuery && (visionText || !hasImages || searchable.length >= 8) ? search(retrievalQuery, subject, mode === 'detail' ? 8 : isMnemonic ? 8 : isComplex ? 6 : 4, owner) : [];
+  const sources = retrievalQuery && (visionText || !hasImages || searchable.length >= 8) ? search(retrievalQuery, subject, mode === 'detail' ? 8 : (isMnemonic || isCaseLookup) ? 8 : isComplex ? 6 : 4, owner) : [];
   const contextBrief = buildContextBrief(history, query || (visionText ? '（图片中的题目，已识别为上方题干）' : ''));
   const system = buildSystemPrompt({
     subject, mode,
-    sources: sources.slice(0, mode === 'detail' ? 10 : isMnemonic ? 8 : isComplex ? 6 : 4),
+    sources: sources.slice(0, mode === 'detail' ? 10 : (isMnemonic || isCaseLookup) ? 8 : isComplex ? 6 : 4),
     contextBrief,
-    sourceChars: mode === 'detail' ? 1400 : isMnemonic ? 1200 : isComplex ? 900 : 700,
+    sourceChars: mode === 'detail' ? 1400 : isMnemonic ? 1200 : isCaseLookup ? 1100 : isComplex ? 900 : 700,
   });
   const messages = buildMessages(history.slice(-12));
   if (!messages.length) return sendJson(res, 400, { error: '没有可发送的消息' });
