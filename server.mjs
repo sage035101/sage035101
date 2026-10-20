@@ -1096,7 +1096,7 @@ async function handleChat(req, res, owner = '', session = null) {
     if (res.writableEnded) return;
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
-  const cacheable = !hasImages && history.length <= 1 && !!query;
+  const cacheable = !hasImages && history.length <= 1 && !!query && !docs.some((d) => d.uploaded && (d.owner || '') === owner);
   const cacheKey = cacheable ? `${subject}|${mode}|${canonicalQuestion(query)}` : '';
   let cached = cacheKey ? answerCache.get(cacheKey) : null;
   if (cached && Date.now() - cached.at > ANSWER_CACHE_TTL) {
@@ -1251,10 +1251,14 @@ async function handleChat(req, res, owner = '', session = null) {
     }
     rememberTurn(convId, lastUser?.id, query, `srv-ai-${Date.now()}`, checked || fullText);
     if (cacheKey && checked) {
-      answerCache.set(cacheKey, { text: checked, at: Date.now() });
-      if (answerCache.size > ANSWER_CACHE_MAX) {
-        const first = answerCache.keys().next().value;
-        if (first) answerCache.delete(first);
+      if (sources.some((s) => s.uploaded)) {
+        // 不使用用户上传资料生成跨用户缓存，避免串资料
+      } else {
+        answerCache.set(cacheKey, { text: checked, at: Date.now() });
+        if (answerCache.size > ANSWER_CACHE_MAX) {
+          const first = answerCache.keys().next().value;
+          if (first) answerCache.delete(first);
+        }
       }
     }
     send('done', { usage });
