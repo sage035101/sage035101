@@ -409,6 +409,7 @@ function sourceWeight(doc, query) {
   const mnemonic = /口诀|记忆|背诵|带背|车润海|视频|课程|逻辑|方法/.test(query);
   if (doc.source.includes('精讲一本通')) w += mnemonic ? 0.22 : 0.12;
   if (doc.source.includes('B站2027课程')) w += mnemonic ? 0.42 : 0.12;
+  if (doc.source.includes('速记口诀') || doc.source.includes('口诀（用户提供）')) w += mnemonic ? 0.5 : 0.18;
   if (doc.source.includes('指导性案例')) w += /指导性案例|类似|相似|案例|案号|检例/.test(query) ? 0.38 : -0.16;
   if (doc.source.includes('司法解释')) w += /司法解释|法释|条文|解释/.test(query) ? 0.22 : -0.12;
   if (doc.source.includes('官方索引')) w -= 0.05;
@@ -705,14 +706,25 @@ ${contextBrief || ''}
 2. 口诀原文必须保持词序、词数和结构，只允许把明显的同音错字改成教材术语；不得改写、增删、换顺序，也不得用相近口诀替代。
 3. 材料没有检索到该口诀原文时，明确写“这轮材料未检索到该口诀原文”，再按教材逻辑讲；不得凭记忆冒充车润海原话，也不得把其他老师或法考口诀混进来。
 4. 用户只要口诀时，先给完整口诀，再解释；不要用大段理论淹没口诀本身。
+5. 材料中没有老师原口诀时，**不得自创口诀、顺口溜或“我帮你归纳”的口诀**；直接用教材逻辑分点讲清区别和判断顺序。只有材料明确是老师口诀时才引用原文。
+6. 用户上传的《刑法速记口诀》《宪法学口诀》属于用户提供的口诀资料，涉及口诀、记忆、背诵时优先检索；引用其中的口诀要保持原文，不得自行改编。若与教材/车润海课程冲突，先按教材/课程主线，再说明差异。
+
+【科目与检索】
+1. 用户选择具体科目（刑法/民法/法理/宪法/法制史）时，只依据该科目及其官方资料回答，不要混入其他科目内容。
+2. 用户选择“全部”时，先判断问题涉及哪些科目，再综合调用全部相关资料；跨科目问题可以同时使用多个科目材料。
+3. 科目判断不确定时，优先按题干中的部门法、罪名、制度关键词判断，不要只凭题目标题。
+4. 具体科目下检索不到足够材料时，可以按该科目基本原理推导，但要说明是原理分析，不要伪造教材内容。
 
 【官方案例与司法解释】
 1. 官方材料分三类：最高法指导性案例（裁判要点）、最高检指导性案例（仅索引）、最高法/最高检司法解释（仅索引）。索引材料只能用于核对名称、案号和链接，不能当条文原文引用。
 2. 用户问“这个案件有没有相似的指导性案例 / 最高法最高检有没有类似案例”时，只从“最高法指导性案例”“最高检指导性案例”材料中找；找到就给 **指导性案例编号 / 检例编号 + 官方链接**，可简要说明相似点；没有就明确说“没有找到相似的指导性案例”。不得编造案号、案名、链接，也不得拿普通案例冒充指导性案例。
-3. 材料中标注“引用限制：未经授权不得转载、摘编或建立镜像”的（主要是最高检页面），**不得引用原文、不得逐字复述**；改用教材/讲义表述回答。不要向用户解释“我没有引用”“有版权风险”“不能转载”，直接自然作答即可。
-4. 标题含“修改决定”“废止”“失效”的文件，以及旧版本，不得作为现行有效司法解释引用；不要把它们混入现行规则。
-5. 司法解释索引只用于确认名称、文号和链接；具体答题仍以教材/课程口径为主，索引不能替代条文。
-6. 用户明确要求来源或链接时，给出官方链接；这是答案内容，不是来源列表。其他情况下不要附来源列表。
+3. 用户描述案情问相似案例时，先按案由、行为方式、争点检索，不要因为案名与描述不完全一样就直接说没有；有相近条目就列出并说明相似点和差异；只有确实没有时才回答没有。不能把“没有同名案件”当成“没有相似案例”。
+4. 材料中标注“引用限制：未经授权不得转载、摘编或建立镜像”的（主要是最高检页面），**不得引用原文、不得逐字复述**；可以给编号、标题、官方链接和基于标题/关键词的相似点，具体内容改用教材/讲义表述。不要向用户解释“我没有引用”“有版权风险”“不能转载”，直接自然作答即可。
+5. 标题含“修改决定”“废止”“失效”的文件，以及旧版本，不得作为现行有效司法解释引用；不要把它们混入现行规则。
+6. 司法解释索引只用于确认名称、文号和链接；具体答题仍以教材/课程口径为主，索引不能替代条文。
+7. 对没有引用限制的指导性案例，可以参考关键词、裁判要点、基本案情、裁判结果做概括性说明，但不要逐字复述全文，不要大段复制裁判理由。
+8. 不要补充材料中没有的其他案例编号、案名或裁判要点。不要因为检索结果少就断言“最高法/最高检所有案例都集中在某领域”；只能表述为“本轮没有检索到”。
+9. 用户明确要求来源或链接时，给出官方链接；这是答案内容，不是来源列表。其他情况下不要附来源列表。
 
 【准确性红线】
 1. 不得编造法条、司法解释、案例、页码、真题年份。记不清条文号时，只写规范名称，不写条号。
@@ -1001,15 +1013,17 @@ async function handleChat(req, res, owner = '', session = null) {
     : effectiveQuery;
   const isMnemonic = /口诀|记忆|背诵|带背|车润海|视频|课程|逻辑|方法/.test(effectiveQuery);
   const isCaseLookup = /指导性案例|类似|相似|案例|案号|检例/.test(effectiveQuery);
+  const isSubjectSpecific = !!subject && subject !== '全部';
   const isComplex = mode === 'detail' || isMnemonic || isCaseLookup || effectiveQuery.length > 60 ||
     /比较|分析|论述|评价|为什么|如何|区别|联系|观点|案例|计算|推理|判断顺序|展开|详细|教材|法硕|司法解释|指导性/.test(effectiveQuery);
-  const sources = retrievalQuery && (visionText || !hasImages || searchable.length >= 8) ? search(retrievalQuery, subject, mode === 'detail' ? 8 : (isMnemonic || isCaseLookup) ? 8 : isComplex ? 6 : 4, owner) : [];
+  const sourceLimit = mode === 'detail' ? 8 : (isMnemonic || isCaseLookup) ? 8 : isSubjectSpecific ? 6 : isComplex ? 6 : 4;
+  const sources = retrievalQuery && (visionText || !hasImages || searchable.length >= 8) ? search(retrievalQuery, subject, sourceLimit, owner) : [];
   const contextBrief = buildContextBrief(history, query || (visionText ? '（图片中的题目，已识别为上方题干）' : ''));
   const system = buildSystemPrompt({
     subject, mode,
-    sources: sources.slice(0, mode === 'detail' ? 10 : (isMnemonic || isCaseLookup) ? 8 : isComplex ? 6 : 4),
+    sources: sources.slice(0, mode === 'detail' ? 10 : (isMnemonic || isCaseLookup) ? 8 : isSubjectSpecific ? 6 : isComplex ? 6 : 4),
     contextBrief,
-    sourceChars: mode === 'detail' ? 1400 : isMnemonic ? 1200 : isCaseLookup ? 1100 : isComplex ? 900 : 700,
+    sourceChars: mode === 'detail' ? 1400 : isMnemonic ? 1200 : isCaseLookup ? 1100 : isSubjectSpecific ? 850 : isComplex ? 900 : 700,
   });
   const messages = buildMessages(history.slice(-12));
   if (!messages.length) return sendJson(res, 400, { error: '没有可发送的消息' });
