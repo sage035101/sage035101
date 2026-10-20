@@ -261,7 +261,7 @@ function messageHtml(m) {
     </article>`;
   }
   const body = m.error
-    ? `<p>${esc(m.text || '出错了，请稍后重试。')}</p>`
+    ? `<p>${esc(m.text || '出错了，请稍后重试。')}</p><button class="retry-btn" data-retry="${m.id}">重试</button>`
     : `<div class="markdown">${mdToHtml(m.text || '', m.sources || [])}</div>${sourcesHtml(m.sources)}`;
   return `<article class="msg ai ${m.error ? 'error' : ''}" data-id="${m.id}">
     <div class="avatar">法</div>
@@ -703,17 +703,21 @@ async function send(opts = {}) {
   stopVoice();
   hideVoiceHelp();
   const editMsg = opts.editMsg || null;
-  const text = editMsg ? String(editMsg.text || '').trim() : input.value.trim();
+  const reuseMsg = opts.reuseMsg || null;
+  const text = editMsg ? String(editMsg.text || '').trim() : reuseMsg ? String(reuseMsg.text || '').trim() : input.value.trim();
   if (!text && !state.pending.length) { input.focus(); return; }
-  const hasContext = state.messages.some((m) => m.role === 'assistant' && String(m.text || '').trim());
-  const imgs = editMsg ? [] : state.pending.map((p) => p.full);
-  const thumbs = editMsg ? (editMsg.thumbs || []) : state.pending.map((p) => p.thumb);
+  const hasContext = state.messages.some((m) => m.role === 'assistant' && String(m.text || '').trim() && m !== reuseMsg);
+  const imgs = editMsg || reuseMsg ? [] : state.pending.map((p) => p.full);
+  const thumbs = editMsg ? (editMsg.thumbs || []) : reuseMsg ? (reuseMsg.thumbs || []) : state.pending.map((p) => p.thumb);
   let userMsg;
   if (editMsg) {
     userMsg = editMsg;
     userMsg.text = text;
     renderMessages();
     saveState();
+  } else if (reuseMsg) {
+    userMsg = reuseMsg;
+    renderMessages();
   } else {
     userMsg = { id: uid(), role: 'user', text, thumbs, ts: Date.now() };
     state.messages.push(userMsg);
@@ -812,6 +816,10 @@ async function send(opts = {}) {
           }
           const lp = aiEl.querySelector('.live-peers');
           if (lp) lp.innerHTML = peersHtml(aiMsg.peers);
+          continue;
+        }
+        if (ev === 'quota') {
+          if (typeof data.quota === 'number') { state.quota = data.quota; renderQuota(); }
           continue;
         }
         if (ev === 'peer') {
@@ -1031,6 +1039,18 @@ $('#messages').addEventListener('contextmenu', (e) => {
   if (!bubble) return;
   e.preventDefault();
   openEdit(bubble.closest('.msg')?.dataset.id);
+});
+$('#messages').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-retry]');
+  if (!btn || state.streaming) return;
+  const ai = state.messages.find((m) => m.id === btn.dataset.retry && m.role === 'assistant');
+  const idx = ai ? state.messages.indexOf(ai) : -1;
+  const user = idx > 0 ? state.messages[idx - 1] : null;
+  if (!ai || !user || user.role !== 'user') return;
+  state.messages.splice(idx, 1);
+  renderMessages();
+  saveState();
+  send({ reuseMsg: user });
 });
 
 function openRenew() {
