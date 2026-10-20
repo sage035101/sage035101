@@ -30,8 +30,14 @@ const UPSTASH_URL = String(process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/
 const UPSTASH_TOKEN = String(process.env.UPSTASH_REDIS_REST_TOKEN || '');
 const REMOTE_CODES = !!(UPSTASH_URL && UPSTASH_TOKEN);
 const REMOTE_CODES_KEY = process.env.GUEST_CODES_KEY || 'sage:guest_codes:v1';
+const USAGE_KEY = process.env.SAGE_USAGE_KEY || 'sage:usage:v1';
+const USAGE_FILE = process.env.SAGE_USAGE_FILE || path.join(DATA, 'usage.json');
+const HISTORICAL_AVG_COST = Math.max(0, Number(process.env.SAGE_HISTORICAL_AVG_COST) || 0.015);
+const MASTER_HISTORY_COST = Math.max(0, Number(process.env.SAGE_MASTER_HISTORY_COST) || 0);
 let guestCodes = new Map();
 let saveQueue = Promise.resolve();
+let usageStats = defaultUsage();
+let usageQueue = Promise.resolve();
 
 // 远程持久化只保存"密码记录"本身；修改密码、登录、扣次数都会写回 Upstash。
 // 本地文件保留为断网/Upstash 故障时的兜底，逻辑与旧版一致。
@@ -158,6 +164,182 @@ function guestQuota(session) {
 const rateBuckets = new Map();
 
 const nowMs = () => Date.now();
+
+// ---------- 用量统计（按 DeepSeek API 实际 usage 估算） ----------
+function defaultUsage() {
+  return {
+    v: 1,
+    initialized: false,
+    guest: { cost: 0, questions: 0, historicalCost: 0, historicalQuestions: 0 },
+    master: { cost: 0, questions: 0, historicalCost: 0, historicalQuestions: 0 },
+    self: { cost: 0, questions: 0 },
+    updatedAt: Date.now(),
+  };
+}
+function sanitizeUsage(input) {
+  const out = defaultUsage();
+  const num = (v) => (Number.isFinite(Number(v)) ? Math.max(0, Number(v)) : 0);
+  if (input && typeof input === 'object') {
+    out.initialized = input.initialized === true;
+    for (const key of ['guest', 'master']) {
+      const src = input[key];
+      if (src && typeof src === 'object') {
+        out[key].cost = num(src.cost);
+        out[key].questions = Math.floor(num(src.questions));
+        out[key].historicalCost = num(src.historicalCost);
+        out[key].historicalQuestions = Math.floor(num(src.historicalQuestions));
+      }
+    }
+    if (input.self && typeof input.self === 'object') {
+      out.self.cost = num(input.self.cost);
+      out.self.questions = Math.floor(num(input.self.questions));
+    }
+    out.updatedAt = num(input.updatedAt) || Date.now();
+  }
+  return out;
+}
+function loadUsageLocal() {
+  try {
+    usageStats = sanitizeUsage(JSON.parse(fs.readFileSync(USAGE_FILE, 'utf8')));
+  } catch { /* optional */ }
+}
+function saveUsageLocal() {
+  try {
+    fs.mkdirSync(path.dirname(USAGE_FILE), { recursive: true });
+    fs.writeFileSync(USAGE_FILE, JSON.stringify(usageStats, null, 2), 'utf8');
+  } catch (e) { console.error('save usage local', e.message); }
+}
+async function remoteGetUsage() {
+  if (!REMOTE_CODES) return null;
+  const res = await fetch(`${UPSTASH_URL}/get/${encodeURIComponent(USAGE_KEY)}`, {
+    headers: { authorization: `Bearer ${UPSTASH_TOKEN}` },
+    signal: AbortSignal.timeout(6000),
+  });
+  if (!res.ok) throw new Error(`upstash usage get ${res.status}`);
+  const body = await res.json().catch(() => null);
+  return body && body.result != null ? String(body.result) : null;
+}
+async function remoteSetUsage(payload) {
+  if (!REMOTE_CODES) return;
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`${UPSTASH_URL}/set/${encodeURIComponent(USAGE_KEY)}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${UPSTASH_TOKEN}`,
+          'content-type': 'text/plain; charset=utf-8',
+        },
+        body: payload,
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) throw new Error(`upstash usage set ${res.status}`);
+      const body = await res.json().catch(() => null);
+      if (body && body.result !== 'OK') throw new Error(`upstash usage set rejected: ${String(body.result).slice(0, 40)}`);
+      return;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 1) await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+  throw lastErr;
+}
+function serializeUsage() {
+  return JSON.stringify(usageStats);
+}
+function saveUsage() {
+  saveUsageLocal();
+  if (!REMOTE_CODES) return Promise.resolve();
+  const payload = serializeUsage();
+  usageQueue = usageQueue
+    .then(() => remoteSetUsage(payload))
+    .catch((e) => console.error('save usage remote', e.message));
+  return usageQueue;
+}
+function backfillUsage() {
+  if (usageStats.initialized) return;
+  let questions = 0;
+  let cost = 0;
+  for (const rec of guestCodes.values()) {
+    const limit = Math.max(0, Number(rec.limit) || 0);
+    const remaining = Math.max(0, Number(rec.remaining) || 0);
+    const used = Math.max(0, limit - remaining);
+    questions += used;
+    cost += used * HISTORICAL_AVG_COST;
+  }
+  usageStats.guest.historicalQuestions += questions;
+  usageStats.guest.historicalCost += cost;
+  usageStats.master.historicalCost = Math.max(usageStats.master.historicalCost, MASTER_HISTORY_COST);
+  usageStats.initialized = true;
+  usageStats.updatedAt = Date.now();
+  if (questions > 0) {
+    console.log(`usage: backfilled ${questions} historical guest questions, estimated ¥${cost.toFixed(4)}`);
+  }
+}
+async function initUsage() {
+  loadUsageLocal();
+  if (REMOTE_CODES) {
+    try {
+      const raw = await remoteGetUsage();
+      if (raw) {
+        usageStats = sanitizeUsage(JSON.parse(raw));
+        saveUsageLocal();
+        if (!usageStats.initialized) {
+          backfillUsage();
+          await saveUsage();
+        }
+        return;
+      }
+    } catch (e) {
+      console.error('usage: remote load failed, using local estimate:', e.message);
+    }
+  }
+  if (!usageStats.initialized) {
+    backfillUsage();
+    await saveUsage();
+  } else if (REMOTE_CODES) {
+    await saveUsage();
+  }
+}
+function isPeakNow() {
+  const bj = new Date(Date.now() + 8 * 3600 * 1000);
+  const day = bj.getUTCDay();
+  if (day === 0 || day === 6) return false;
+  const hour = bj.getUTCHours();
+  return (hour >= 9 && hour < 12) || (hour >= 14 && hour < 18);
+}
+const MODEL_PRICES = {
+  'deepseek-flash': { hit: [0.04, 0.02], miss: [2, 1], out: [8, 4] },
+  'deepseek-v4-pro': { hit: [0.30, 0.15], miss: [9, 4.5], out: [27, 13.5] },
+};
+function estimateUsageCost(u) {
+  if (!u || typeof u !== 'object') return 0;
+  const price = MODEL_PRICES[MODEL] || MODEL_PRICES['deepseek-flash'];
+  const idx = isPeakNow() ? 0 : 1;
+  const input = Math.max(0, Number(u.input_tokens) || 0);
+  const cache = Math.min(input, Math.max(0, Number(u.cache_read_input_tokens) || 0));
+  const miss = Math.max(0, input - cache);
+  const output = Math.max(0, Number(u.output_tokens) || 0);
+  return (miss * price.miss[idx] + cache * price.hit[idx] + output * price.out[idx]) / 1e6;
+}
+function recordUsage(role, payer, u) {
+  if (!u || typeof u !== 'object') return;
+  const cost = estimateUsageCost(u);
+  if (!Number.isFinite(cost) || cost <= 0) return;
+  const target = payer === 'self'
+    ? usageStats.self
+    : (role === 'master' ? usageStats.master : usageStats.guest);
+  target.cost += cost;
+  target.questions += 1;
+  usageStats.updatedAt = Date.now();
+  void saveUsage();
+}
+function formatMoney(n) {
+  const value = Math.max(0, Number(n) || 0);
+  if (value > 0 && value < 0.01) return `¥${value.toFixed(4)}`;
+  if (value > 0 && value < 1) return `¥${value.toFixed(3)}`;
+  return `¥${value.toFixed(2)}`;
+}
 const clientIp = (req) => String(req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.socket?.remoteAddress || 'unknown').split(',')[0].trim();
 function rateLimit(key, limit, windowMs) {
   const t = nowMs();
@@ -768,8 +950,9 @@ function buildMessages(history) {
   const out = [];
   for (const m of history) {
     if (!m || (m.role !== 'user' && m.role !== 'assistant')) continue;
-    const text = String(m.content || '').trim();
-    const imgs = Array.isArray(m.images) ? m.images.filter(Boolean).slice(0, 3) : [];
+    const rawText = String(m.content || '').trim();
+    const text = m.role === 'user' ? rawText.slice(0, 2500) : rawText.slice(0, 4000);
+    const imgs = Array.isArray(m.images) ? m.images.filter(Boolean).slice(0, 5) : [];
     if (!text && !imgs.length) continue;
     if (m.role === 'assistant') {
       const clean = text.replace(/〔资料\s*\d+〕/g, '');
@@ -818,9 +1001,7 @@ function buildSystemPrompt({ subject, mode, sources, contextBrief, sourceChars =
       }).join('\n\n')
     : '（本轮没有检索到直接相关的资料。不要因此拒答：先用你自己的法律分析搭框架，再说明哪些属于通行理解。）';
 
-  return `你是「Sage」，一位有经验的法硕辅导老师。你不是教材复读机，而是能把问题想透、讲透，并带着学生迁移到新题的人。当前科目倾向：${eff}。
-
-${contextBrief || ''}
+  return `你是「Sage」，一位有经验的法硕辅导老师。你不是教材复读机，而是能把问题想透、讲透，并带着学生迁移到新题的人。
 
 【先思考，再回答】
 1. 先判断用户真正问什么，尤其是追问里的“那、这、它、上述、继续”指代什么。结合对话历史理解意图，不要把每一问都当成孤立新题。
@@ -887,6 +1068,9 @@ ${contextBrief || ''}
 6. 使用 Markdown，小标题用 **加粗**，不要用一级标题；多用短句、分点、对比。
 7. 当前备考周期为 2027 法硕；法律依据以现行有效规范为准。真题只有确有把握时才写明年份题号。
 
+【本轮信息】
+当前科目倾向：${eff}
+${contextBrief ? `【对话上下文】\n${contextBrief}\n` : ''}
 【参考材料】
 ${material}`;
 }
@@ -981,7 +1165,7 @@ function listUploads(owner = '') {
 }
 
 async function extractImageQuestion(auth, images) {
-  if (!Array.isArray(images) || !images.length) return '';
+  if (!Array.isArray(images) || !images.length) return { text: '', usage: null };
   const blocks = [{
     type: 'text',
     text: `你是严谨的法硕题目 OCR。只提取图片中的题目，不要解答、不要分析、不要补充图片没有的内容。
@@ -994,12 +1178,12 @@ async function extractImageQuestion(auth, images) {
 2. 图片里有多道题时，按题号分开。
 3. 不要输出“答案是”“解析”等图片中没有的内容。`,
   }];
-  for (const dataUrl of images.slice(0, 3)) {
+  for (const dataUrl of images.slice(0, 5)) {
     const mm = /^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl));
     if (!mm) continue;
     blocks.push({ type: 'image', source: { type: 'base64', media_type: mm[1], data: mm[2] } });
   }
-  if (blocks.length === 1) return '';
+  if (blocks.length === 1) return { text: '', usage: null };
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 30000);
   try {
@@ -1017,12 +1201,12 @@ async function extractImageQuestion(auth, images) {
       }),
       signal: ac.signal,
     });
-    if (!r.ok) return '';
+    if (!r.ok) return { text: '', usage: null };
     const j = await r.json();
     const text = (j.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
-    return text.length > 8 ? text.slice(0, 5000) : '';
+    return { text: text.length > 8 ? text.slice(0, 5000) : '', usage: j.usage || null };
   } catch {
-    return '';
+    return { text: '', usage: null };
   } finally {
     clearTimeout(timer);
   }
@@ -1060,8 +1244,11 @@ async function handleChat(req, res, owner = '', session = null) {
   const isManageDelete = /^\/manage删除\s*[+＋]?\s*(\d{6})$/.test(manageCmd);
   const isManageImport = manageCmd.startsWith('/manage导入');
   const isManageExport = manageCmd === '/manage导出';
+  const isUsageQuery = manageCmd === '/查询用量';
+  const isMasterUsageQuery = manageCmd === '/站长查询用量';
+  const isSetMasterHistory = manageCmd.startsWith('/设置历史站长用量');
   const isMasterViewCode = /^\d{6}$/.test(manageCmd) && session?.role === 'master';
-  if (manageCmd === '/manage' || manageCmd === '/manage1' || isTempCode || isManageDelete || isManageImport || isManageExport || isMasterViewCode) {
+  if (manageCmd === '/manage' || manageCmd === '/manage1' || isTempCode || isManageDelete || isManageImport || isManageExport || isUsageQuery || isMasterUsageQuery || isSetMasterHistory || isMasterViewCode) {
     res.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache, no-transform',
@@ -1078,7 +1265,9 @@ async function handleChat(req, res, owner = '', session = null) {
         ? '只有站长密码登录后，才能删除答疑密码。'
         : isManageImport || isManageExport
           ? '只有站长密码登录后，才能导入或导出答疑密码。'
-          : '只有站长密码登录后，才能生成新的答疑密码。';
+          : isUsageQuery || isMasterUsageQuery || isSetMasterHistory
+            ? '只有站长密码登录后，才能查询或设置用量。'
+            : '只有站长密码登录后，才能生成新的答疑密码。';
     } else if (isManageDelete) {
       const code = manageCmd.match(/^\/manage删除\s*[+＋]?\s*(\d{6})$/)[1];
       const rec = guestCodes.get(code);
@@ -1131,6 +1320,27 @@ async function handleChat(req, res, owner = '', session = null) {
       } else {
         answer = '没有识别到可导入的密码。格式示例：\n/manage导入 123456 210\n/manage导入 123456 210 own\n每行一个；own 表示该密码需要使用者自带 DeepSeek Key。';
       }
+    } else if (isUsageQuery) {
+      const g = usageStats.guest;
+      const s = usageStats.self;
+      answer = `随机 6 位密码用户用量（按 DeepSeek API 估算）\n已记录：${g.questions} 题，${formatMoney(g.cost)}\n历史估算：${g.historicalQuestions} 题，${formatMoney(g.historicalCost)}\n合计：${formatMoney(g.cost + g.historicalCost)}\n自带 Key 用户：${s.questions} 题，${formatMoney(s.cost)}（不计入站长余额）`;
+    } else if (isMasterUsageQuery) {
+      const m = usageStats.master;
+      const g = usageStats.guest;
+      const s = usageStats.self;
+      const total = m.cost + m.historicalCost + g.cost + g.historicalCost;
+      answer = `站长账号 Sage 总用量（按 DeepSeek API 估算）\n站长本人提问：${m.questions} 题，${formatMoney(m.cost)}\n站长历史补录：${formatMoney(m.historicalCost)}\n随机密码用户（站长额度）：${g.questions} 题，${formatMoney(g.cost)}\n随机密码历史估算：${g.historicalQuestions} 题，${formatMoney(g.historicalCost)}\n合计：${formatMoney(total)}\n自带 Key 用户（不计入）：${s.questions} 题，${formatMoney(s.cost)}\n\n历史站长本人未补录可发：/设置历史站长用量 金额`;
+    } else if (isSetMasterHistory) {
+      const amountText = manageCmd.replace(/^\/设置历史站长用量\s*/, '').trim();
+      if (!/^\d+(?:\.\d{1,4})?$/.test(amountText)) {
+        answer = '格式：/设置历史站长用量 12.34\n用于补录功能上线前的站长本人 Sage 用量；随机密码历史会自动估算。';
+      } else {
+        const amount = Math.min(100000, Number(amountText) || 0);
+        usageStats.master.historicalCost = amount;
+        usageStats.updatedAt = nowMs();
+        await saveUsage();
+        answer = `已设置站长历史用量：${formatMoney(amount)}\n说明：上线前的站长 Sage 提问没有流水，无法自动精确回溯；随机密码历史会按现有密码已用次数自动估算。`;
+      }
     } else {
       const selfKey = manageCmd === '/manage1';
       const limit = isTempCode ? 25 : selfKey ? 500 : 260;
@@ -1152,6 +1362,25 @@ async function handleChat(req, res, owner = '', session = null) {
     send('done', {});
     res.end();
     return;
+  }
+
+  if (Array.from(query).length > 2500) {
+    return sendJson(res, 400, { error: '单次输入不能超过 2500 字' });
+  }
+  if (Array.isArray(lastUser?.images) && lastUser.images.length > 5) {
+    return sendJson(res, 400, { error: '一次最多发送 5 张图片' });
+  }
+  {
+    const fileList = Array.isArray(body.files) ? body.files : (body.file ? [body.file] : []);
+    const fileBytes = fileList.reduce((sum, f) => {
+      const size = Number(f?.size);
+      if (Number.isFinite(size) && size > 0) return sum + size;
+      if (typeof f?.data === 'string') return sum + Math.floor(f.data.length * 0.75);
+      return sum;
+    }, 0);
+    if (fileBytes > 100 * 1024 * 1024) {
+      return sendJson(res, 400, { error: '文件类问题不能超过 100MB' });
+    }
   }
 
   if (session?.role === 'guest' && !guestCodes.has(session.code)) {
@@ -1195,6 +1424,8 @@ async function handleChat(req, res, owner = '', session = null) {
     return sendJson(res, 403, { error: msg });
   }
   const hasImages = !!(lastUser?.images?.length);
+  const usesUserKey = !!String(req.headers['x-user-api-key'] || '').trim();
+  const usagePayer = usesUserKey || (session?.role === 'guest' && guestCodes.get(session.code)?.usesOwnerKey === false) ? 'self' : 'owner';
   const peersCfg = peerConfig(req);
   const peers = hasImages ? [] : peersCfg.list;
 
@@ -1224,7 +1455,9 @@ async function handleChat(req, res, owner = '', session = null) {
   }
 
   // 图片题先做一次“只识别题目”的预检，再拿识别文本去检索教材，最后才作答。
-  const visionText = hasImages ? await extractImageQuestion(auth, lastUser.images) : '';
+  const vision = hasImages ? await extractImageQuestion(auth, lastUser.images) : { text: '', usage: null };
+  if (vision.usage) recordUsage(session?.role || 'guest', usagePayer, vision.usage);
+  const visionText = vision.text;
   const effectiveQuery = query || visionText;
   const searchable = (visionText || query)
     .replace(/这张图|图片|图中|如图|上图|下图|主要|讲了什么|说的是什么|是什么|这道题|选什么|怎么做|请分析|分析一下/g, ' ')
@@ -1366,7 +1599,7 @@ async function handleChat(req, res, owner = '', session = null) {
   const reader = upstream.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
-  let usage = null;
+  let streamUsage = null;
   let fullText = '';
   let thinkingChars = 0;
   let thinkingSent = 0;
@@ -1398,7 +1631,7 @@ async function handleChat(req, res, owner = '', session = null) {
             send('thinking', { chars: thinkingChars });
           }
         } else if (event === 'message_delta' && data.usage) {
-          usage = data.usage;
+          streamUsage = data.usage;
         } else if (event === 'error') {
           send('error', { message: data.error?.message || '生成中断' });
         }
@@ -1448,7 +1681,8 @@ async function handleChat(req, res, owner = '', session = null) {
         }
       }
     }
-    send('done', { usage });
+    recordUsage(session?.role || 'guest', usagePayer, streamUsage);
+    send('done', { usage: streamUsage });
   }
   res.end();
 }
@@ -1666,6 +1900,7 @@ const server = http.createServer(async (req, res) => {
 
 rebuildIndex();
 await initGuestCodes();
+await initUsage();
 server.listen(PORT, HOST, () => {
   console.log(`Sage法硕答疑 running at http://127.0.0.1:${PORT}`);
   for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
