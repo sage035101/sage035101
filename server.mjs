@@ -34,6 +34,8 @@ const USAGE_KEY = process.env.SAGE_USAGE_KEY || 'sage:usage:v1';
 const USAGE_FILE = process.env.SAGE_USAGE_FILE || path.join(DATA, 'usage.json');
 const HISTORICAL_AVG_COST = Math.max(0, Number(process.env.SAGE_HISTORICAL_AVG_COST) || 0.015);
 const MASTER_HISTORY_COST = Math.max(0, Number(process.env.SAGE_MASTER_HISTORY_COST) || 0);
+const CODE_BUDGET = process.env.SAGE_CODE_BUDGET === undefined ? 9 : Math.max(0, Number(process.env.SAGE_CODE_BUDGET) || 0);
+const CODE_BUDGET_RESERVE = Math.max(0, Number(process.env.SAGE_CODE_BUDGET_RESERVE) || 0.3);
 let guestCodes = new Map();
 let saveQueue = Promise.resolve();
 let usageStats = defaultUsage();
@@ -47,9 +49,11 @@ function sanitizeGuestCodes(input) {
   for (const [code, rec] of Object.entries(input)) {
     if (!/^\d{6}$/.test(code) || !rec || typeof rec !== 'object') continue;
     const remaining = Math.max(0, Math.floor(Number(rec.remaining) || 0));
+    const limit = Math.max(remaining, Math.floor(Number(rec.limit) || remaining));
     out.set(code, {
       remaining,
-      limit: Math.max(remaining, Math.floor(Number(rec.limit) || remaining)),
+      limit,
+      spent: Math.max(0, Number(rec.spent) || Math.max(0, limit - remaining) * HISTORICAL_AVG_COST),
       activeSid: null,
       createdAt: Number(rec.createdAt) || nowMs(),
       usesOwnerKey: rec.usesOwnerKey !== false,
@@ -322,7 +326,7 @@ function estimateUsageCost(u) {
   const output = Math.max(0, Number(u.output_tokens) || 0);
   return (miss * price.miss[idx] + cache * price.hit[idx] + output * price.out[idx]) / 1e6;
 }
-function recordUsage(role, payer, u) {
+function recordUsage(role, payer, u, code = '') {
   if (!u || typeof u !== 'object') return;
   const cost = estimateUsageCost(u);
   if (!Number.isFinite(cost) || cost <= 0) return;
@@ -333,6 +337,14 @@ function recordUsage(role, payer, u) {
   target.questions += 1;
   usageStats.updatedAt = Date.now();
   void saveUsage();
+  if (code) {
+    const rec = guestCodes.get(code);
+    if (rec) {
+      rec.spent = Math.max(0, Number(rec.spent) || 0) + cost;
+      guestCodes.set(code, rec);
+      void saveGuestCodes();
+    }
+  }
 }
 function formatMoney(n) {
   const value = Math.max(0, Number(n) || 0);
@@ -649,6 +661,23 @@ function makeSnippet(text, query) {
   const start = Math.max(0, best - 70);
   const end = Math.min(text.length, start + 260);
   return (start > 0 ? '…' : '') + text.slice(start, end) + (end < text.length ? '…' : '');
+}
+
+function sourceExcerpt(source, query, maxChars) {
+  const text = String(source?.text || '');
+  if (!text) return '';
+  if (text.length <= maxChars) return text;
+  const terms = [...new Set(tokenize(cleanQuery(query)).filter((t) => t.length >= 2))];
+  let best = -1;
+  for (const t of terms) {
+    const i = text.indexOf(t);
+    if (i >= 0 && (best < 0 || i < best)) best = i;
+  }
+  if (best < 0) return text.slice(0, maxChars);
+  let start = Math.max(0, best - Math.floor(maxChars * 0.25));
+  const end = Math.min(text.length, start + maxChars);
+  if (end - start < maxChars) start = Math.max(0, end - maxChars);
+  return text.slice(start, end);
 }
 
 function validateCitations(text, sources) {
@@ -984,7 +1013,7 @@ function buildMessages(history) {
 }
 
 // ---------- prompt ----------
-function buildSystemPrompt({ subject, mode, sources, contextBrief, sourceChars = 1100 }) {
+function buildSystemPrompt({ subject, mode, sources, contextBrief, sourceChars = 1100, query = '' }) {
   const eff = subject && subject !== '全部' ? subject : '自动判断';
   const detail = mode === 'detail'
     ? '详细模式：可以展开到 1000—1600 字，但仍须句句有用。'
@@ -997,7 +1026,7 @@ function buildSystemPrompt({ subject, mode, sources, contextBrief, sourceChars =
         else if (String(s.source).includes('最高检指导性案例')) loc = '最高检指导性案例';
         else if (String(s.source).includes('司法解释')) loc = '司法解释官方索引';
         else loc = `PDF第${s.page}页`;
-        return `〔资料${s.n}〕${s.title}｜${loc}\n${String(s.text).slice(0, sourceChars)}`;
+        return `〔资料${s.n}〕${s.title}｜${loc}\n${sourceExcerpt(s, query, sourceChars)}`;
       }).join('\n\n')
     : '（本轮没有检索到直接相关的资料。不要因此拒答：先用你自己的法律分析搭框架，再说明哪些属于通行理解。）';
 
@@ -1283,13 +1312,13 @@ async function handleChat(req, res, owner = '', session = null) {
       const code = manageCmd;
       const rec = guestCodes.get(code);
       answer = rec
-        ? `答疑密码：${code}\n剩余次数：${Math.max(0, Number(rec.remaining) || 0)} 次\n类型：${rec.usesOwnerKey === false ? '使用者自带 DeepSeek Key' : '站长 DeepSeek 额度'}\n状态：${rec.activeSid ? '已有设备登录' : '尚未登录'}`
+        ? `答疑密码：${code}\n剩余次数：${Math.max(0, Number(rec.remaining) || 0)} 次\n类型：${rec.usesOwnerKey === false ? '使用者自带 DeepSeek Key' : '站长 DeepSeek 额度'}\n状态：${rec.activeSid ? '已有设备登录' : '尚未登录'}\n已用预算：${formatMoney(rec.spent)}${CODE_BUDGET > 0 ? ` / ¥${CODE_BUDGET}` : ''}`
         : `密码 ${code} 不存在，或已经用完作废。`;
     } else if (isManageExport) {
       const list = [...guestCodes.entries()].sort((a, b) => (a[1].createdAt || 0) - (b[1].createdAt || 0));
       answer = list.length
         ? `共 ${list.length} 个答疑密码：\n` + list.map(([code, rec]) =>
-          `${code}  剩余 ${Math.max(0, Number(rec.remaining) || 0)} 次  ${rec.usesOwnerKey === false ? '自带 Key' : '站长额度'}  ${rec.activeSid ? '已登录' : '未登录'}`).join('\n')
+          `${code}  剩余 ${Math.max(0, Number(rec.remaining) || 0)} 次  ${rec.usesOwnerKey === false ? '自带 Key' : '站长额度'}  ${rec.activeSid ? '已登录' : '未登录'}  已用 ${formatMoney(rec.spent)}${CODE_BUDGET > 0 ? ` / ¥${CODE_BUDGET}` : ''}`).join('\n')
         : '当前没有可用的答疑密码。';
     } else if (isManageImport) {
       const bodyText = manageCmd.replace(/^\/manage导入\s*/, '');
@@ -1308,6 +1337,7 @@ async function handleChat(req, res, owner = '', session = null) {
         guestCodes.set(code, {
           remaining,
           limit: old ? Math.max(Number(old.limit) || remaining, remaining) : remaining,
+          spent: Math.max(0, Number(old?.spent) || 0),
           activeSid: old?.activeSid || null,
           createdAt: old?.createdAt || nowMs(),
           usesOwnerKey,
@@ -1346,14 +1376,15 @@ async function handleChat(req, res, owner = '', session = null) {
       const limit = isTempCode ? 25 : selfKey ? 500 : 260;
       let code;
       do { code = String(crypto.randomInt(100000, 1000000)); } while (guestCodes.has(code));
-      guestCodes.set(code, { remaining: limit, limit, activeSid: null, createdAt: nowMs(), usesOwnerKey: !selfKey });
+      guestCodes.set(code, { remaining: limit, limit, spent: 0, activeSid: null, createdAt: nowMs(), usesOwnerKey: !selfKey });
       await saveGuestCodes();
+      const budgetLine = CODE_BUDGET > 0 ? `\n\n单码预算上限：¥${CODE_BUDGET}；达到后停止回答，剩余次数不扣。` : '';
       if (isTempCode) {
-        answer = `已生成临时答疑密码：${code}\n\n剩余答疑次数：25 次\n类型：站长 DeepSeek 额度\n使用规则：单次临时密码，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。`;
+        answer = `已生成临时答疑密码：${code}\n\n剩余答疑次数：25 次\n类型：站长 DeepSeek 额度\n使用规则：单次临时密码，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。${budgetLine}`;
       } else if (selfKey) {
-        answer = `已生成新的答疑密码：${code}\n\n剩余答疑次数：500 次\n这个密码必须由使用者填写自己的 DeepSeek API Key，不能使用站长额度。\n使用规则：长期有效，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。`;
+        answer = `已生成新的答疑密码：${code}\n\n剩余答疑次数：500 次\n这个密码必须由使用者填写自己的 DeepSeek API Key，不能使用站长额度。\n使用规则：长期有效，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。${budgetLine}`;
       } else {
-        answer = `已生成新的答疑密码：${code}\n\n剩余答疑次数：260 次\n使用规则：这个密码长期有效，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。\n\n把密码发给对方即可，不要再公开发到群里。`;
+        answer = `已生成新的答疑密码：${code}\n\n剩余答疑次数：260 次\n使用规则：这个密码长期有效，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。\n\n把密码发给对方即可，不要再公开发到群里。${budgetLine}`;
       }
     }
     send('meta', { sources: [], model: MODEL, peers: [], quota: session?.role === 'guest' ? guestQuota(session) : null, manage: true });
@@ -1437,6 +1468,9 @@ async function handleChat(req, res, owner = '', session = null) {
     const rec = guestCodes.get(session.code);
     if (!rec || rec.activeSid !== session.id) return sendJson(res, 401, { error: '该密码已在另一台设备登录，本设备已退出' });
     if (Number(rec.remaining) <= 0) return sendJson(res, 403, { error: '这个密码的答疑次数已用完' });
+    if (CODE_BUDGET > 0 && Number(rec.spent || 0) + CODE_BUDGET_RESERVE > CODE_BUDGET) {
+      return sendJson(res, 403, { error: `这个密码的 ${CODE_BUDGET} 元预算已用完，请联系站长换新密码` });
+    }
     const skip = String(req.headers['x-quota-skip'] || '') === '1';
     if (!skip) {
       quotaCharged = true;
@@ -1456,7 +1490,7 @@ async function handleChat(req, res, owner = '', session = null) {
 
   // 图片题先做一次“只识别题目”的预检，再拿识别文本去检索教材，最后才作答。
   const vision = hasImages ? await extractImageQuestion(auth, lastUser.images) : { text: '', usage: null };
-  if (vision.usage) recordUsage(session?.role || 'guest', usagePayer, vision.usage);
+  if (vision.usage) recordUsage(session?.role || 'guest', usagePayer, vision.usage, session?.role === 'guest' ? session.code : '');
   const visionText = vision.text;
   const effectiveQuery = query || visionText;
   const searchable = (visionText || query)
@@ -1479,6 +1513,7 @@ async function handleChat(req, res, owner = '', session = null) {
   const contextBrief = buildContextBrief(history, query || (visionText ? '（图片中的题目，已识别为上方题干）' : ''));
   const system = buildSystemPrompt({
     subject, mode,
+    query: retrievalQuery || effectiveQuery,
     sources: sources.slice(0, mode === 'detail' ? 10 : (isMnemonic || isCaseLookup) ? 8 : isSubjectSpecific ? 6 : isComplex ? 6 : 4),
     contextBrief,
     sourceChars: mode === 'detail' ? 1400 : isMnemonic ? 1200 : isCaseLookup ? 1100 : isSubjectSpecific ? 850 : isComplex ? 900 : 700,
@@ -1681,7 +1716,7 @@ async function handleChat(req, res, owner = '', session = null) {
         }
       }
     }
-    recordUsage(session?.role || 'guest', usagePayer, streamUsage);
+    recordUsage(session?.role || 'guest', usagePayer, streamUsage, session?.role === 'guest' ? session.code : '');
     send('done', { usage: streamUsage });
   }
   res.end();
