@@ -946,12 +946,18 @@ async function handleChat(req, res, owner = '', session = null) {
   const peers = hasImages ? [] : peersCfg.list;
 
   let quota = session?.role === 'guest' ? guestQuota(session) : null;
+  let quotaCharged = false;
+  let quotaBefore = null;
+  let quotaRecord = null;
   if (session?.role === 'guest') {
     const rec = guestCodes.get(session.code);
     if (!rec || rec.activeSid !== session.id) return sendJson(res, 401, { error: '该密码已在另一台设备登录，本设备已退出' });
     if (Number(rec.remaining) <= 0) return sendJson(res, 403, { error: '这个密码的答疑次数已用完' });
     const skip = String(req.headers['x-quota-skip'] || '') === '1';
     if (!skip) {
+      quotaCharged = true;
+      quotaBefore = Number(rec.remaining);
+      quotaRecord = { ...rec };
       rec.remaining = Math.max(0, Number(rec.remaining) - 1);
       quota = rec.remaining;
       if (rec.remaining <= 0) {
@@ -1022,6 +1028,17 @@ async function handleChat(req, res, owner = '', session = null) {
   };
   send('meta', { sources: [], model: MODEL, peers: peers.map((p) => ({ id: p.id, label: p.label, status: 'pending' })), quota });
 
+  const refundQuota = () => {
+    if (!quotaCharged || !session || session.role !== 'guest' || quotaBefore == null) return;
+    const rec = guestCodes.get(session.code) || { ...(quotaRecord || {}), activeSid: session.id };
+    rec.remaining = quotaBefore;
+    rec.activeSid = session.id;
+    guestCodes.set(session.code, rec);
+    saveGuestCodes();
+    quota = quotaBefore;
+    send('quota', { quota });
+  };
+
   const peerDone = new Set();
   const peerTasks = peers.map((peer) => (async () => {
     try {
@@ -1055,7 +1072,8 @@ async function handleChat(req, res, owner = '', session = null) {
       signal: ac.signal,
     });
   } catch (e) {
-    if (!closed) send('error', { message: '连接 DeepSeek 失败，请稍后重试。' });
+    refundQuota();
+    if (!closed) send('error', { message: '连接 DeepSeek 失败，本次不扣次数，请稍后重试。' });
     res.end();
     return;
   }
@@ -1063,6 +1081,7 @@ async function handleChat(req, res, owner = '', session = null) {
   if (!upstream.ok) {
     let detail = '';
     try { detail = await upstream.text(); } catch {}
+    refundQuota();
     let msg = `DeepSeek 返回 ${upstream.status}`;
     if (upstream.status === 401) msg = 'DeepSeek 凭据失效，请在右上角“设置”中填写 API Key。';
     else if (upstream.status === 402) msg = 'DeepSeek 账户额度不足。';
@@ -1115,13 +1134,20 @@ async function handleChat(req, res, owner = '', session = null) {
       }
     }
   } catch (e) {
-    if (!closed) send('error', { message: '生成中断，请重试。' });
+    refundQuota();
+    if (!closed) send('error', { message: '生成中断，本次不扣次数，请重试。' });
   }
   if (!closed) {
     let checked = fullText
       .replace(/〔资料\s*\d+〕/g, '')
       .replace(/[ \t]{2,}/g, ' ')
       .trim();
+    if (!checked) {
+      refundQuota();
+      send('error', { message: '没有收到有效回答，本次不扣次数，请重试。' });
+      res.end();
+      return;
+    }
     if (contextBrief && looksLikeContextRefusal(checked)) {
       const retried = await retryForContext({ system, messages, auth, contextBrief });
       if (retried) checked = retried;
