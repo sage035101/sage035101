@@ -1096,8 +1096,9 @@ async function handleChat(req, res, owner = '', session = null) {
     if (res.writableEnded) return;
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
-  const cacheable = !hasImages && history.length <= 1 && !!query && !docs.some((d) => d.uploaded && (d.owner || '') === owner);
-  const cacheKey = cacheable ? `${subject}|${mode}|${canonicalQuestion(query)}` : '';
+  const cacheLookup = !hasImages && !!query;
+  const cacheKey = cacheLookup ? `${subject}|${mode}|${canonicalQuestion(query)}` : '';
+  const cacheStore = cacheLookup && history.length <= 1 && !docs.some((d) => d.uploaded && (d.owner || '') === owner);
   let cached = cacheKey ? answerCache.get(cacheKey) : null;
   if (cached && Date.now() - cached.at > ANSWER_CACHE_TTL) {
     answerCache.delete(cacheKey);
@@ -1250,7 +1251,7 @@ async function handleChat(req, res, owner = '', session = null) {
       }
     }
     rememberTurn(convId, lastUser?.id, query, `srv-ai-${Date.now()}`, checked || fullText);
-    if (cacheKey && checked) {
+    if (cacheStore && checked) {
       if (sources.some((s) => s.uploaded)) {
         // 不使用用户上传资料生成跨用户缓存，避免串资料
       } else {
