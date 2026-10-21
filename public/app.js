@@ -705,8 +705,8 @@ async function send(opts = {}) {
   const editMsg = opts.editMsg || null;
   const reuseMsg = opts.reuseMsg || null;
   const text = editMsg ? String(editMsg.text || '').trim() : reuseMsg ? String(reuseMsg.text || '').trim() : input.value.trim();
-  if (Array.from(text).length > 2500) {
-    toast(`单次输入不能超过 2500 字，当前 ${Array.from(text).length} 字`);
+  if (Array.from(text.replace(/\s/g, '')).length > 8000) {
+    toast(`单次输入不能超过 8000 字（不计空格），当前 ${Array.from(text.replace(/\s/g, '')).length} 字`);
     return;
   }
   if (!text && !state.pending.length) { input.focus(); return; }
