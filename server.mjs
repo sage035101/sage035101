@@ -1549,14 +1549,14 @@ async function handleChat(req, res, owner = '', session = null) {
       }
     } else {
       const selfKey = manageCmd === '/manage1';
-      const limit = isTempCode ? 25 : selfKey ? 500 : 260;
+      const limit = isTempCode ? 66 : selfKey ? 500 : 260;
       let code;
       do { code = String(crypto.randomInt(100000, 1000000)); } while (guestCodes.has(code));
       guestCodes.set(code, { remaining: limit, limit, spent: 0, activeSid: null, createdAt: nowMs(), usesOwnerKey: !selfKey });
       await saveGuestCodes();
       const budgetLine = CODE_BUDGET > 0 && limit <= 260 ? `\n\n单码预算上限：¥${CODE_BUDGET}；达到后停止回答，剩余次数不扣。` : '';
       if (isTempCode) {
-        answer = `已生成临时答疑密码：${code}\n\n剩余答疑次数：25 次\n类型：站长 DeepSeek 额度\n使用规则：单次临时密码，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。${budgetLine}`;
+        answer = `已生成临时答疑密码：${code}\n\n剩余答疑次数：66 次\n类型：站长 DeepSeek 额度\n使用规则：单次临时密码，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。${budgetLine}`;
       } else if (selfKey) {
         answer = `已生成新的答疑密码：${code}\n\n剩余答疑次数：500 次\n这个密码必须由使用者填写自己的 DeepSeek API Key，不能使用站长额度。\n使用规则：长期有效，仅限一台浏览器或设备登录；换设备登录后，旧设备会自动退出。${budgetLine}`;
       } else {
