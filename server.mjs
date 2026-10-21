@@ -19,17 +19,22 @@ const HOST = process.env.HOST || '0.0.0.0';
 const API_BASE = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/anthropic';
 const MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-flash';
 const ACCESS_PASSWORD = String(process.env.SAGE_ACCESS_PASSWORD || '');
-const SESSION_SECRET = String(process.env.SAGE_SESSION_SECRET || crypto.randomBytes(32).toString('hex'));
+const SESSION_SECRET = String(process.env.SAGE_SESSION_SECRET || crypto.createHash('sha256')
+  .update(`sage-session|${ACCESS_PASSWORD}|${process.env.UPSTASH_REDIS_REST_TOKEN || ''}|${process.env.DEEPSEEK_API_KEY || ''}|${process.env.DEEPSEEK_ACCOUNT_TOKEN || ''}`)
+  .digest('hex'));
 const REQUIRE_USER_KEY = process.env.REQUIRE_USER_DEEPSEEK_KEY === '1';
-const SESSION_TTL = 7 * 86400 * 1000;
+const SESSION_TTL = 365 * 86400 * 1000;
 const SESSION_COOKIE = 'sage_session';
 const CLIENT_COOKIE = 'sage_client';
 const CLIENT_TTL = 365 * 86400 * 1000;
 const sessions = new Map();
+let sessionSaveQueue = Promise.resolve();
 const UPSTASH_URL = String(process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/+$/, '');
 const UPSTASH_TOKEN = String(process.env.UPSTASH_REDIS_REST_TOKEN || '');
 const REMOTE_CODES = !!(UPSTASH_URL && UPSTASH_TOKEN);
 const REMOTE_CODES_KEY = process.env.GUEST_CODES_KEY || 'sage:guest_codes:v1';
+const SESSIONS_KEY = process.env.SAGE_SESSIONS_KEY || 'sage:sessions:v1';
+const SESSIONS_FILE = process.env.SAGE_SESSIONS_FILE || path.join(DATA, 'sessions.json');
 const USAGE_KEY = process.env.SAGE_USAGE_KEY || 'sage:usage:v1';
 const USAGE_FILE = process.env.SAGE_USAGE_FILE || path.join(DATA, 'usage.json');
 const HISTORICAL_AVG_COST = Math.max(0, Number(process.env.SAGE_HISTORICAL_AVG_COST) || 0.015);
@@ -54,7 +59,7 @@ function sanitizeGuestCodes(input) {
       remaining,
       limit,
       spent: Math.max(0, Number(rec.spent) || Math.max(0, limit - remaining) * HISTORICAL_AVG_COST),
-      activeSid: null,
+      activeSid: typeof rec.activeSid === 'string' && /^[A-Za-z0-9_-]{10,100}$/.test(rec.activeSid) ? rec.activeSid : null,
       createdAt: Number(rec.createdAt) || nowMs(),
       usesOwnerKey: rec.usesOwnerKey !== false,
     });
@@ -377,6 +382,101 @@ function parseCookies(req) {
   }
   return out;
 }
+function sanitizeSessions(input) {
+  const out = new Map();
+  if (!input || typeof input !== 'object') return out;
+  for (const [sid, rec] of Object.entries(input)) {
+    if (!/^[A-Za-z0-9_-]{10,100}$/.test(sid) || !rec || typeof rec !== 'object') continue;
+    if (rec.role !== 'master' && rec.role !== 'guest') continue;
+    const expires = Number(rec.expires) || 0;
+    if (expires <= nowMs()) continue;
+    const code = rec.role === 'guest' && /^\d{6}$/.test(String(rec.code || '')) ? String(rec.code) : undefined;
+    if (rec.role === 'guest' && !code) continue;
+    out.set(sid, {
+      role: rec.role,
+      ...(code ? { code } : {}),
+      usesOwnerKey: rec.usesOwnerKey !== false,
+      createdAt: Number(rec.createdAt) || nowMs(),
+      expires,
+    });
+  }
+  return out;
+}
+function loadSessionsLocal() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    sessions.clear();
+    for (const [sid, rec] of sanitizeSessions(raw && raw.sessions ? raw.sessions : raw)) sessions.set(sid, rec);
+    if (sessions.size) console.log(`sessions: loaded ${sessions.size} from local`);
+  } catch { /* optional */ }
+}
+function saveSessionsLocal() {
+  try {
+    fs.mkdirSync(path.dirname(SESSIONS_FILE), { recursive: true });
+    const data = { v: 1, updatedAt: nowMs(), sessions: Object.fromEntries(sessions) };
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(data, null, 2), 'utf8');
+  } catch (e) { console.error('save sessions local', e.message); }
+}
+async function remoteGetSessions() {
+  if (!REMOTE_CODES) return null;
+  const res = await fetch(`${UPSTASH_URL}/get/${encodeURIComponent(SESSIONS_KEY)}`, {
+    headers: { authorization: `Bearer ${UPSTASH_TOKEN}` },
+    signal: AbortSignal.timeout(6000),
+  });
+  if (!res.ok) throw new Error(`upstash sessions get ${res.status}`);
+  const body = await res.json().catch(() => null);
+  return body && body.result != null ? String(body.result) : null;
+}
+async function remoteSetSessions(payload) {
+  if (!REMOTE_CODES) return;
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`${UPSTASH_URL}/set/${encodeURIComponent(SESSIONS_KEY)}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${UPSTASH_TOKEN}`,
+          'content-type': 'text/plain; charset=utf-8',
+        },
+        body: payload,
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) throw new Error(`upstash sessions set ${res.status}`);
+      const body = await res.json().catch(() => null);
+      if (body && body.result !== 'OK') throw new Error(`upstash sessions set rejected: ${String(body.result).slice(0, 40)}`);
+      return;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 1) await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+  throw lastErr;
+}
+function saveSessions() {
+  saveSessionsLocal();
+  if (!REMOTE_CODES) return Promise.resolve();
+  const payload = JSON.stringify({ v: 1, updatedAt: nowMs(), sessions: Object.fromEntries(sessions) });
+  sessionSaveQueue = sessionSaveQueue
+    .then(() => remoteSetSessions(payload))
+    .catch((e) => console.error('save sessions remote', e.message));
+  return sessionSaveQueue;
+}
+async function initSessions() {
+  loadSessionsLocal();
+  if (!REMOTE_CODES) return;
+  try {
+    const raw = await remoteGetSessions();
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      sessions.clear();
+      for (const [sid, rec] of sanitizeSessions(parsed && parsed.sessions ? parsed.sessions : parsed)) sessions.set(sid, rec);
+      saveSessionsLocal();
+      console.log(`sessions: loaded ${sessions.size} from upstash`);
+    }
+  } catch (e) {
+    console.error('sessions: remote load failed, using local:', e.message);
+  }
+}
 function sessionInfo(req) {
   const raw = parseCookies(req)[SESSION_COOKIE];
   if (!raw) return null;
@@ -396,6 +496,7 @@ function createSession(req, res, data) {
   const exp = nowMs() + SESSION_TTL;
   const info = { ...data, createdAt: nowMs(), expires: exp };
   sessions.set(sid, info);
+  void saveSessions();
   const raw = `${sid}.${exp}`;
   const sig = crypto.createHmac('sha256', SESSION_SECRET).update(raw).digest('base64url');
   const secure = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
@@ -410,6 +511,7 @@ function trimMasterSessions(max = 5) {
     const [sid] = list.shift();
     sessions.delete(sid);
   }
+  if (list.length) void saveSessions();
 }
 function setSessionCookie(req, res) {
   return createSession(req, res, { role: 'master' }).sid;
@@ -790,6 +892,7 @@ async function retryForEmpty({ system, messages, auth }) {
 function sourceWeight(doc, query) {
   let w = 1;
   const mnemonic = /口诀|记忆|背诵|带背|视频|课程|逻辑|方法/.test(query);
+  if (doc.source.includes('考试分析')) w += 0.45;
   if (doc.source.includes('精讲一本通')) w += mnemonic ? 0.22 : 0.12;
   if (doc.source.includes('背诵一本通')) w += mnemonic ? 0.3 : 0.1;
   if (doc.source.includes('B站2027课程')) w += mnemonic ? 0.42 : 0.12;
@@ -1082,11 +1185,17 @@ function buildSystemPrompt({ subject, mode, sources, contextBrief, sourceChars =
 【教材与观点】
 1. 法硕答题的基准顺序是：《2027法硕考试分析》与法硕教材口径 → 法硕精讲/背诵一本通与课程 → 现行法/司法解释补强。不得用《法考》的二阶层、三阶层、法考少数说替换法硕教材的犯罪构成和判断顺序；教材明确采用的观点除外。
 2. 教材存在多种观点时，先给法硕教材主线，再用一小段说明争议与应试取舍；不要把法考通说直接写成法硕通说。
-3. 材料没有直接覆盖的，不要动辄说“教材未涉及”。先按刑法/民法原理推导，明确区分“教材观点”“司法解释补强”与“你的解释”，再补现行法和有效司法解释。
+3. 材料没有直接覆盖时，明确写“本轮材料没有直接覆盖”，只能标“按一般法理分析”，不得写成教材/法条原文，也不得用模型记忆冒充法硕教材观点。
 4. 教材与现行法冲突时，以法硕备考口径为主，并提示冲突；不得用新法条直接推翻教材结论而不说明。
 5. 观点题、学说题按“结论 → 教材主线 → 理由/要件 → 其他观点 → 法硕答题采哪一观点 → 易混点”写；不要把少数说写成通说，也不要把法考观点混进来。
 6. 刑法按法硕教材/背诵一本通的犯罪构成、共同犯罪、财产犯罪表述；民法按法硕教材/背诵一本通的法律行为、物权变动、合同、侵权表述。教材内部有差异时按教材呈现，不自行“统一”。
 7. 结论必须能在【参考材料】中找到依据；材料与模型记忆冲突时，以材料为准。不要先凭记忆作答再补材料。
+
+【材料核对】
+1. 每个结论先在【参考材料】中找直接依据；找不到就明确“材料未覆盖”，只能给一般法理分析，不得说“教材认为”“考试分析认为”。
+2. 观点优先级：考试分析/教材 > 背诵一本通/课程 > 口诀/个人总结；冲突时先说明差异，再按法硕应试口径取舍。
+3. 数字、年份、法条号、案例号、页码没有在材料中出现，不得编造；只写规范名称，不写具体编号。
+4. 作答前自检：结论、构成要件、例外、案例编号是否都有材料支撑；没有支撑就降级表述或标注不确定。
 
 【新增背诵书与指导性案例】
 1. 参考材料包括《27法理学背诵一本通》《27法制史背诵一本通》《27刑法背诵一本通》《27宪法学背诵一本通》《最高人民法院历年指导性案例汇编》，以及此前所有教材、课程、案例、口诀资料。回答时综合检索，不得只看新资料，也不得只看旧资料。
@@ -1372,6 +1481,7 @@ async function handleChat(req, res, owner = '', session = null) {
         if (rec.activeSid) sessions.delete(rec.activeSid);
         guestCodes.delete(code);
         await saveGuestCodes();
+        void saveSessions();
         answer = `已永久删除答疑密码：${code}\n该密码立即失效，无法再登录；正在使用它的设备也会退出。`;
       }
     } else if (isMasterViewCode) {
@@ -1627,7 +1737,7 @@ async function handleChat(req, res, owner = '', session = null) {
   };
   const cacheLookup = !hasImages && !!query;
   const cacheKey = cacheLookup ? `${subject}|${mode}|${canonicalQuestion(query)}` : '';
-  const cacheStore = cacheLookup && history.length <= 1 && !docs.some((d) => d.uploaded && (d.owner || '') === owner);
+  const cacheStore = cacheLookup && history.length <= 1 && sources.length > 0 && !docs.some((d) => d.uploaded && (d.owner || '') === owner);
   let cached = cacheKey ? answerCache.get(cacheKey) : null;
   if (cached && Date.now() - cached.at > ANSWER_CACHE_TTL) {
     answerCache.delete(cacheKey);
@@ -1923,7 +2033,18 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/logout' && req.method === 'POST') {
       const cur = sessionInfo(req);
-      if (cur) sessions.delete(cur.id);
+      if (cur) {
+        sessions.delete(cur.id);
+        if (cur.role === 'guest' && cur.code) {
+          const rec = guestCodes.get(cur.code);
+          if (rec && rec.activeSid === cur.id) {
+            rec.activeSid = null;
+            guestCodes.set(cur.code, rec);
+            await saveGuestCodes();
+          }
+        }
+        void saveSessions();
+      }
       clearSession(res);
       return sendJson(res, 200, { ok: true });
     }
@@ -2027,6 +2148,7 @@ const server = http.createServer(async (req, res) => {
 
 rebuildIndex();
 await initGuestCodes();
+await initSessions();
 await initUsage();
 server.listen(PORT, HOST, () => {
   console.log(`Sage法硕答疑 running at http://127.0.0.1:${PORT}`);
