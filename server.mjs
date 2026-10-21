@@ -1233,32 +1233,41 @@ async function extractImageQuestion(auth, images) {
     blocks.push({ type: 'image', source: { type: 'base64', media_type: mm[1], data: mm[2] } });
   }
   if (blocks.length === 1) return { text: '', usage: null };
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), 30000);
-  try {
-    const r = await fetch(`${API_BASE.replace(/\/$/, '')}/v1/messages`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', ...auth },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 1600,
-        temperature: 0,
-        system: '你是题目识别器，只做逐字转录，不回答问题。',
-        messages: [{ role: 'user', content: blocks }],
-        output_config: { effort: 'low' },
-        stream: false,
-      }),
-      signal: ac.signal,
-    });
-    if (!r.ok) return { text: '', usage: null };
-    const j = await r.json();
-    const text = (j.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
-    return { text: text.length > 8 ? text.slice(0, 5000) : '', usage: j.usage || null };
-  } catch {
-    return { text: '', usage: null };
-  } finally {
-    clearTimeout(timer);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), attempt === 0 ? 30000 : 45000);
+    try {
+      const r = await fetch(`${API_BASE.replace(/\/$/, '')}/v1/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', ...auth },
+        body: JSON.stringify({
+          model: MODEL,
+          max_tokens: 3000,
+          temperature: 0,
+          system: '你是题目识别器，只做逐字转录，不回答问题。',
+          messages: [{ role: 'user', content: blocks }],
+          output_config: { effort: 'low' },
+          stream: false,
+        }),
+        signal: ac.signal,
+      });
+      if (!r.ok) {
+        if (attempt === 0) continue;
+        return { text: '', usage: null };
+      }
+      const j = await r.json();
+      const text = (j.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+      if (text.length >= 2) return { text: text.slice(0, 8000), usage: j.usage || null };
+      if (attempt === 0) continue;
+      return { text: '', usage: j.usage || null };
+    } catch {
+      if (attempt === 0) continue;
+      return { text: '', usage: null };
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  return { text: '', usage: null };
 }
 
 // 普通 6 位密码用户要求恢复/重置/增加额度、次数时，直接拒绝，避免诱导模型改额度。
@@ -1549,6 +1558,14 @@ async function handleChat(req, res, owner = '', session = null) {
         text: `【图片识别出的题目（以这段文字为准，逐字核对后再作答）】\n${visionText}\n\n如果图片与这段文字冲突，以图片中清楚可见的内容为准；看不清的字不要猜。`,
       });
     }
+  } else if (hasImages) {
+    const last = messages[messages.length - 1];
+    if (last && last.role === 'user' && Array.isArray(last.content)) {
+      last.content.unshift({
+        type: 'text',
+        text: '【图片 OCR 没有返回可用文字】请直接看图片作答；看不清就明确说“图片看不清”，不要猜。',
+      });
+    }
   }
 
   const payload = {
@@ -1715,7 +1732,7 @@ async function handleChat(req, res, owner = '', session = null) {
     if (!/来源|出处|原文|根据什么|依据什么|哪本书|哪个文件|引用哪里|参考哪里/.test(effectiveQuery)) {
       checked = stripMetaAttribution(checked);
     }
-    if (checked !== fullText) send('final', { text: checked });
+    send('final', { text: checked });
     if (peerTasks.length) {
       await Promise.race([
         Promise.allSettled(peerTasks),
@@ -1936,7 +1953,7 @@ const server = http.createServer(async (req, res) => {
       });
     }
     if (p === '/api/chat' && req.method === 'POST') {
-      if (!rateLimit('chat:' + clientIp(req), 60, 600000)) return sendJson(res, 429, { error: '请求过于频繁，请 10 分钟后再试' });
+      if (!rateLimit('chat:' + clientIp(req), 300, 600000)) return sendJson(res, 429, { error: '当前提问较多，请稍等几分钟再试' });
       return await handleChat(req, res, owner, info);
     }
     if (p === '/api/uploads' && req.method === 'GET') return sendJson(res, 200, { uploads: listUploads(owner) });
