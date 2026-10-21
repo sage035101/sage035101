@@ -11,7 +11,7 @@ const PUBLIC = path.join(ROOT, 'public');
 const DATA = path.join(ROOT, 'data');
 const KB_FILE = path.join(DATA, 'kb.jsonl');
 const WRITING_FILE = path.join(DATA, 'writing_method.jsonl');
-const JINGJIANG_FILE = path.join(DATA, 'jingjiang.jsonl');
+const JINGJIANG_FILES = [1, 2, 3].map((i) => path.join(DATA, `jingjiang_${String(i).padStart(2, '0')}.jsonl`));
 const UPLOAD_FILE = path.join(DATA, 'uploads.jsonl');
 const GUEST_FILE = process.env.GUEST_CODES_FILE || path.join(DATA, 'guest_codes.json');
 const GUEST_BAK = GUEST_FILE + '.bak';
@@ -915,7 +915,7 @@ function sourceWeight(doc, query) {
 }
 
 function rebuildIndex() {
-  docs = [...readJsonl(KB_FILE), ...readJsonl(WRITING_FILE), ...readJsonl(JINGJIANG_FILE), ...readJsonl(UPLOAD_FILE)];
+  docs = [...readJsonl(KB_FILE), ...readJsonl(WRITING_FILE), ...JINGJIANG_FILES.flatMap((f) => readJsonl(f)), ...readJsonl(UPLOAD_FILE)];
   for (let i = 0; i < docs.length; i++) docs[i]._id = i;
   postings = new Map();
   docLens = new Array(docs.length);
