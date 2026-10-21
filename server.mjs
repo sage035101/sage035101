@@ -758,6 +758,35 @@ async function retryForContext({ system, messages, auth, contextBrief }) {
   }
 }
 
+async function retryForEmpty({ system, messages, auth }) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 90000);
+  try {
+    const r = await fetch(`${API_BASE.replace(/\/$/, '')}/v1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', ...auth },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 8192,
+        system,
+        messages,
+        temperature: 0.2,
+        output_config: { effort: 'medium' },
+        stream: false,
+      }),
+      signal: ac.signal,
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const text = (j.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+    return text.length > 20 ? { text, usage: j.usage || null } : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function sourceWeight(doc, query) {
   let w = 1;
   const mnemonic = /口诀|记忆|背诵|带背|视频|课程|逻辑|方法/.test(query);
@@ -988,7 +1017,7 @@ function buildMessages(history) {
   for (const m of history) {
     if (!m || (m.role !== 'user' && m.role !== 'assistant')) continue;
     const rawText = String(m.content || '').trim();
-    const text = m.role === 'user' ? rawText.slice(0, 2500) : rawText.slice(0, 4000);
+    const text = m.role === 'user' ? rawText.slice(0, 8000) : rawText.slice(0, 4000);
     const imgs = Array.isArray(m.images) ? m.images.filter(Boolean).slice(0, 5) : [];
     if (!text && !imgs.length) continue;
     if (m.role === 'assistant') {
@@ -1424,8 +1453,8 @@ async function handleChat(req, res, owner = '', session = null) {
     return;
   }
 
-  if (Array.from(query).length > 2500) {
-    return sendJson(res, 400, { error: '单次输入不能超过 2500 字' });
+  if (Array.from(query.replace(/\s/g, '')).length > 8000) {
+    return sendJson(res, 400, { error: '单次输入不能超过 8000 字（不计空格）' });
   }
   if (Array.isArray(lastUser?.images) && lastUser.images.length > 5) {
     return sendJson(res, 400, { error: '一次最多发送 5 张图片' });
@@ -1570,7 +1599,7 @@ async function handleChat(req, res, owner = '', session = null) {
 
   const payload = {
     model: MODEL,
-    max_tokens: mode === 'detail' ? 8192 : 4096,
+    max_tokens: 8192,
     system,
     messages,
     temperature: 0.2,
@@ -1720,8 +1749,15 @@ async function handleChat(req, res, owner = '', session = null) {
       .replace(/[ \t]{2,}/g, ' ')
       .trim();
     if (!checked) {
+      const retried = await retryForEmpty({ system, messages, auth });
+      if (retried?.text) {
+        checked = retried.text.trim();
+        if (retried.usage) recordUsage(session?.role || 'guest', usagePayer, retried.usage, session?.role === 'guest' ? session.code : '');
+      }
+    }
+    if (!checked) {
       await refundQuota();
-      send('error', { message: '没有收到有效回答，本次不扣次数，请重试。' });
+      send('error', { message: '这次没有生成有效回答，本次不扣次数，请点“重试”；如果反复出现，把题目拆成两问再发。' });
       res.end();
       return;
     }
