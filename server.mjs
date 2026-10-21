@@ -11,6 +11,7 @@ const PUBLIC = path.join(ROOT, 'public');
 const DATA = path.join(ROOT, 'data');
 const KB_FILE = path.join(DATA, 'kb.jsonl');
 const WRITING_FILE = path.join(DATA, 'writing_method.jsonl');
+const JINGJIANG_FILE = path.join(DATA, 'jingjiang.jsonl');
 const UPLOAD_FILE = path.join(DATA, 'uploads.jsonl');
 const GUEST_FILE = process.env.GUEST_CODES_FILE || path.join(DATA, 'guest_codes.json');
 const GUEST_BAK = GUEST_FILE + '.bak';
@@ -902,6 +903,7 @@ function sourceWeight(doc, query) {
   if (doc.source.includes('法硕观点校验')) w += /非法拘禁|转化|致死|死亡|罪名|观点|定性/.test(query) ? 0.7 : 0.08;
   if (doc.source.includes('写作宝典')) w += /案例|行为|拆解|分析|主观|写作|刑法/.test(query) ? 0.45 : 0.1;
   if (doc.source.includes('刑法案例方法')) w += /案例|行为|拆解|分析|几个行为|写作/.test(query) ? 0.6 : 0.1;
+  if (doc.source.includes('2027精讲一本通')) w += /刑法|案例|行为|构成|犯罪|罪数/.test(query) ? 0.2 : 0.05;
   if (mnemonic && /口诀|速记|背诵逻辑|记忆方法|顺口溜/.test(doc.text || '')) w += 0.28;
   if (doc.source.includes('司法解释')) w += /司法解释|法释|条文|解释/.test(query) ? 0.22 : -0.12;
   if (doc.source.includes('官方索引')) w -= 0.05;
@@ -913,7 +915,7 @@ function sourceWeight(doc, query) {
 }
 
 function rebuildIndex() {
-  docs = [...readJsonl(KB_FILE), ...readJsonl(WRITING_FILE), ...readJsonl(UPLOAD_FILE)];
+  docs = [...readJsonl(KB_FILE), ...readJsonl(WRITING_FILE), ...readJsonl(JINGJIANG_FILE), ...readJsonl(UPLOAD_FILE)];
   for (let i = 0; i < docs.length; i++) docs[i]._id = i;
   postings = new Map();
   docLens = new Array(docs.length);
