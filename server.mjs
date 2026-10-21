@@ -10,6 +10,7 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
 const DATA = path.join(ROOT, 'data');
 const KB_FILE = path.join(DATA, 'kb.jsonl');
+const WRITING_FILE = path.join(DATA, 'writing_method.jsonl');
 const UPLOAD_FILE = path.join(DATA, 'uploads.jsonl');
 const GUEST_FILE = process.env.GUEST_CODES_FILE || path.join(DATA, 'guest_codes.json');
 const GUEST_BAK = GUEST_FILE + '.bak';
@@ -899,6 +900,8 @@ function sourceWeight(doc, query) {
   if (doc.source.includes('速记口诀') || doc.source.includes('口诀（用户提供）')) w += mnemonic ? 0.5 : 0.18;
   if (doc.source.includes('指导性案例')) w += /指导性案例|类似|相似|案例|案号|检例/.test(query) ? 0.38 : -0.16;
   if (doc.source.includes('法硕观点校验')) w += /非法拘禁|转化|致死|死亡|罪名|观点|定性/.test(query) ? 0.7 : 0.08;
+  if (doc.source.includes('写作宝典')) w += /案例|行为|拆解|分析|主观|写作|刑法/.test(query) ? 0.45 : 0.1;
+  if (doc.source.includes('刑法案例方法')) w += /案例|行为|拆解|分析|几个行为|写作/.test(query) ? 0.6 : 0.1;
   if (mnemonic && /口诀|速记|背诵逻辑|记忆方法|顺口溜/.test(doc.text || '')) w += 0.28;
   if (doc.source.includes('司法解释')) w += /司法解释|法释|条文|解释/.test(query) ? 0.22 : -0.12;
   if (doc.source.includes('官方索引')) w -= 0.05;
@@ -910,7 +913,7 @@ function sourceWeight(doc, query) {
 }
 
 function rebuildIndex() {
-  docs = [...readJsonl(KB_FILE), ...readJsonl(UPLOAD_FILE)];
+  docs = [...readJsonl(KB_FILE), ...readJsonl(WRITING_FILE), ...readJsonl(UPLOAD_FILE)];
   for (let i = 0; i < docs.length; i++) docs[i]._id = i;
   postings = new Map();
   docLens = new Array(docs.length);
@@ -1209,6 +1212,14 @@ function buildSystemPrompt({ subject, mode, sources, contextBrief, sourceChars =
 2. 为索取债务非法拘禁并使用暴力致人死亡的，同样定故意杀人罪一罪，不再定非法拘禁罪。
 3. 不要把“非法拘禁使用暴力致人死亡”写成“故意伤害致人死亡”，也不要把“拘禁行为本身致死”写成转化犯。
 4. 涉及“非法拘禁＋死亡”时，必须先按上述规则复核，再写结论；与模型的一般刑法记忆冲突时，以法硕考试分析/教材通说和本条为准。
+
+【刑法案例逐行为拆解·写作宝典方法】
+1. 先按主体和时间把材料拆成独立行为，逐个编号：甲 A1/A2/A3，乙 B1/B2，丙 C1；不要把所有行为混成一个整体。
+2. 每个行为分别写清：谁、做了什么、对谁、造成什么结果、主观心态、争点。
+3. 先逐行为定性，再处理行为之间的关系：共同犯罪、吸收/牵连/转化、罪数并罚；不要先给一个总罪名再补行为。
+4. 用“插入式造句法”写理由：甲因……负有……义务/实施……行为，有能力……，造成……结果，主观上……，因此构成……罪。
+5. 最后写犯罪形态、量刑情节、易错点；多个行为能否合并，要看是否同一法益、同一故意、同一阶段，不能为简洁强行合并。
+6. 上述方法只在材料支持时使用；材料没有覆盖的行为，明确标“材料未覆盖”，不要编事实。
 
 【口诀还原】
 1. 用户问“口诀、记忆、背诵、带背、视频里怎么说”时，必须先在【参考材料】的“B站2027课程/背诵一本通”中找原文；找到后按“口诀原文 → 逐词对应 → 教材解释/例外 → 易错点”回答。
