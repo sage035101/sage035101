@@ -760,18 +760,18 @@ async function retryForContext({ system, messages, auth, contextBrief }) {
 
 async function retryForEmpty({ system, messages, auth }) {
   const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), 90000);
+  const timer = setTimeout(() => ac.abort(), 60000);
   try {
     const r = await fetch(`${API_BASE.replace(/\/$/, '')}/v1/messages`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', ...auth },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 8192,
-        system,
+        max_tokens: 4096,
+        system: `${system}\n\n【补答要求】上一次没有生成正文。这次不要长篇思考：先直接给结论，再用最短的必要理由分点说明；不要重复题目，不要输出思考过程。`,
         messages,
         temperature: 0.2,
-        output_config: { effort: 'medium' },
+        output_config: { effort: 'low' },
         stream: false,
       }),
       signal: ac.signal,
@@ -779,7 +779,7 @@ async function retryForEmpty({ system, messages, auth }) {
     if (!r.ok) return null;
     const j = await r.json();
     const text = (j.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
-    return text.length > 20 ? { text, usage: j.usage || null } : null;
+    return text.length > 10 ? { text, usage: j.usage || null } : null;
   } catch {
     return null;
   } finally {
@@ -1145,6 +1145,7 @@ function buildSystemPrompt({ subject, mode, sources, contextBrief, sourceChars =
 6. 使用 Markdown，小标题用 **加粗**，不要用一级标题；多用短句、分点、对比。
 7. 当前备考周期为 2027 法硕；法律依据以现行有效规范为准。真题只有确有把握时才写明年份题号。
 8. 回答中不要出现具体老师姓名；需要指代时用“教材”“课程”“通说”。
+9. 长案例、多小问：先用 1—3 行分别给出每个小问的结论，再展开理由；正文必须尽早出现，不要把全部内容压在思考里。若输出额度紧张，优先保证每个小问都有结论和核心依据。
 
 【本轮信息】
 当前科目倾向：${eff}
@@ -1749,6 +1750,16 @@ async function handleChat(req, res, owner = '', session = null) {
       .replace(/[ \t]{2,}/g, ' ')
       .trim();
     if (!checked) {
+      if (streamUsage) {
+        recordUsage(session?.role || 'guest', usagePayer, streamUsage, session?.role === 'guest' ? session.code : '');
+      }
+      const firstOutput = Number(streamUsage?.output_tokens) || 0;
+      if (firstOutput >= 7800) {
+        await refundQuota();
+        send('error', { message: '这道题思考占满了输出额度，没有生成正文；本次不扣次数，也没有再重试。请把题目拆成两问再发。' });
+        res.end();
+        return;
+      }
       const retried = await retryForEmpty({ system, messages, auth });
       if (retried?.text) {
         checked = retried.text.trim();
