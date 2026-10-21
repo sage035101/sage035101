@@ -1068,7 +1068,7 @@ function buildSystemPrompt({ subject, mode, sources, contextBrief, sourceChars =
 【口诀还原】
 1. 用户问“口诀、记忆、背诵、带背、视频里怎么说”时，必须先在【参考材料】的“B站2027课程/背诵一本通”中找原文；找到后按“口诀原文 → 逐词对应 → 教材解释/例外 → 易错点”回答。
 2. 口诀原文必须保持词序、词数和结构，只允许把明显的同音错字改成教材术语；不得改写、增删、换顺序，也不得用相近口诀替代。
-3. 材料没有检索到该口诀原文时，明确写“这轮材料未检索到该口诀原文”，再按教材逻辑讲；不得凭记忆冒充课程/教材原话，也不得把其他老师或法考口诀混进来。
+3. 材料没有检索到该口诀原文时，明确写“这轮没有找到可直接引用的口诀原文”，再按教材逻辑讲；不得凭记忆冒充课程/教材原话，也不得把其他老师或法考口诀混进来。
 4. 用户只要口诀时，先给完整口诀，再解释；不要用大段理论淹没口诀本身。
 5. 材料中没有课程/教材原口诀时，**不得自创口诀、顺口溜、记忆公式、对仗句、缩略语或“我帮你归纳”的口诀**；也不得用“判断主线”“一句话记法”“记忆抓手”等包装成口诀。只能用普通分点讲清区别和判断顺序；只有材料明确标注是口诀/速记原文时才引用。
 6. 只要本题材料中有对应口诀，**正文第一行必须先给口诀本身**（写成“口诀：…”），不要先写结论、出处、引入或“根据…”；给完口诀再逐词、要件、例外和易错点。用户问的是构成要件、异同、区别，也按这个顺序。
@@ -1529,7 +1529,8 @@ async function handleChat(req, res, owner = '', session = null) {
   const isComplex = mode === 'detail' || isMnemonic || isCaseLookup || effectiveQuery.length > 60 ||
     /比较|分析|论述|评价|为什么|如何|区别|联系|观点|案例|计算|推理|判断顺序|展开|详细|教材|法硕|司法解释|指导性/.test(effectiveQuery);
   const sourceLimit = mode === 'detail' ? 8 : (isMnemonic || isCaseLookup) ? 8 : isSubjectSpecific ? 6 : isComplex ? 6 : 4;
-  const sources = retrievalQuery && (visionText || !hasImages || searchable.length >= 8) ? search(retrievalQuery, subject, sourceLimit, owner) : [];
+  const searchQuery = isMnemonic ? `${retrievalQuery} 口诀 速记 背诵逻辑` : retrievalQuery;
+  const sources = searchQuery && (visionText || !hasImages || searchable.length >= 8) ? search(searchQuery, subject, sourceLimit, owner) : [];
   const contextBrief = buildContextBrief(history, query || (visionText ? '（图片中的题目，已识别为上方题干）' : ''));
   const system = buildSystemPrompt({
     subject, mode,
