@@ -13,6 +13,7 @@ const KB_FILE = path.join(DATA, 'kb.jsonl');
 const WRITING_FILE = path.join(DATA, 'writing_method.jsonl');
 const JINGJIANG_FILES = [1, 2, 3].map((i) => path.join(DATA, `jingjiang_${String(i).padStart(2, '0')}.jsonl`));
 const CONTRACT_FILE = path.join(DATA, 'contract_interpretations.jsonl');
+const CIVIL_FILE = path.join(DATA, 'civil_interpretations.jsonl');
 const COURSE_FILES = fs.readdirSync(DATA).filter((f) => /^(minfa|xiezuo|beisong)_asr_\d+\.jsonl$/.test(f)).sort().map((f) => path.join(DATA, f));
 const UPLOAD_FILE = path.join(DATA, 'uploads.jsonl');
 const GUEST_FILE = process.env.GUEST_CODES_FILE || path.join(DATA, 'guest_codes.json');
@@ -908,6 +909,7 @@ function sourceWeight(doc, query) {
   if (doc.source.includes('2027精讲一本通')) w += /刑法|案例|行为|构成|犯罪|罪数/.test(query) ? 0.2 : 0.05;
   if (doc.source.includes('2027背诵一本通')) w += /逻辑|思路|展开|背诵|要件|例外|刑法/.test(query) ? 0.3 : 0.1;
   if (doc.source.includes('合同类司法解释')) w += /合同|司法解释|民法|买卖|借款|租赁|建设|担保/.test(query) ? 0.4 : 0.1;
+  if (doc.source.includes('八部民法司法解释')) w += /民法|侵权|婚姻|彩礼|消费|建设工程|交通|知识产权|矿产/.test(query) ? 0.35 : 0.08;
   if (mnemonic && /口诀|速记|背诵逻辑|记忆方法|顺口溜/.test(doc.text || '')) w += 0.28;
   if (doc.source.includes('司法解释')) w += /司法解释|法释|条文|解释/.test(query) ? 0.22 : -0.12;
   if (doc.source.includes('官方索引')) w -= 0.05;
@@ -919,7 +921,7 @@ function sourceWeight(doc, query) {
 }
 
 function rebuildIndex() {
-  docs = [...readJsonl(KB_FILE), ...readJsonl(WRITING_FILE), ...JINGJIANG_FILES.flatMap((f) => readJsonl(f)), ...COURSE_FILES.flatMap((f) => readJsonl(f)), ...readJsonl(CONTRACT_FILE), ...readJsonl(UPLOAD_FILE)];
+  docs = [...readJsonl(KB_FILE), ...readJsonl(WRITING_FILE), ...JINGJIANG_FILES.flatMap((f) => readJsonl(f)), ...COURSE_FILES.flatMap((f) => readJsonl(f)), ...readJsonl(CONTRACT_FILE), ...readJsonl(CIVIL_FILE), ...readJsonl(UPLOAD_FILE)];
   for (let i = 0; i < docs.length; i++) docs[i]._id = i;
   postings = new Map();
   docLens = new Array(docs.length);
