@@ -1711,9 +1711,10 @@ async function handleChat(req, res, owner = '', session = null) {
     /比较|分析|论述|评价|为什么|如何|区别|联系|观点|案例|计算|推理|判断顺序|展开|详细|教材|法硕|司法解释|指导性/.test(effectiveQuery);
   const sourceLimit = mode === 'detail' ? 8 : (isMnemonic || isCaseLookup) ? 8 : isSubjectSpecific ? 6 : isComplex ? 6 : 4;
   const searchQuery = isMnemonic ? `${retrievalQuery} 口诀 速记 背诵逻辑` : retrievalQuery;
+  const contractQuery = /合同|司法解释|以物抵债|买卖|借款|租赁|建设工程|担保/.test(effectiveQuery);
   const sources = searchQuery && (visionText || !hasImages || searchable.length >= 8) ? search(searchQuery, subject, sourceLimit, owner) : [];
   // 合同类司法解释直连：检索失败时也保证导入的合同汇编进入上下文
-  if (/合同|司法解释|以物抵债|买卖|借款|租赁|建设工程|担保/.test(effectiveQuery)) {
+  if (contractQuery) {
     const contractDocs = docs.filter((d) => String(d.source || '').includes('合同类司法解释'));
     if (contractDocs.length) {
       const m = effectiveQuery.match(/第\s*(\d{1,3})\s*条/);
@@ -1741,7 +1742,7 @@ async function handleChat(req, res, owner = '', session = null) {
     query: retrievalQuery || effectiveQuery,
     sources: sources.slice(0, mode === 'detail' ? 10 : (isMnemonic || isCaseLookup) ? 8 : isSubjectSpecific ? 6 : isComplex ? 6 : 4),
     contextBrief,
-    sourceChars: mode === 'detail' ? 1400 : isMnemonic ? 1200 : isCaseLookup ? 1100 : isSubjectSpecific ? 850 : isComplex ? 900 : 700,
+    sourceChars: contractQuery ? 3200 : mode === 'detail' ? 1400 : isMnemonic ? 1200 : isCaseLookup ? 1100 : isSubjectSpecific ? 850 : isComplex ? 900 : 700,
   });
   const messages = buildMessages(history.slice(-12));
   if (!messages.length) return sendJson(res, 400, { error: '没有可发送的消息' });
