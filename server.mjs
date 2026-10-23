@@ -1717,7 +1717,6 @@ async function handleChat(req, res, owner = '', session = null) {
   if (contractQuery) {
     const contractDocs = docs.filter((d) => String(d.source || '').includes('合同类司法解释'));
     if (contractDocs.length) {
-      const m = effectiveQuery.match(/第\s*(\d{1,3})\s*条/);
       const cn = (n) => {
         const d = ['零','一','二','三','四','五','六','七','八','九'];
         if (n <= 10) return n === 10 ? '十' : d[n];
@@ -1725,7 +1724,8 @@ async function handleChat(req, res, owner = '', session = null) {
         const t = Math.floor(n / 10), r = n % 10;
         return d[t] + '十' + (r ? d[r] : '');
       };
-      const wanted = m ? contractDocs.filter((d) => String(d.text || '').includes('第' + cn(Number(m[1])) + '条')) : [];
+      const nums = [...effectiveQuery.matchAll(/第\s*(\d{1,3})\s*条/g)].map((x) => Number(x[1]));
+      const wanted = nums.length ? contractDocs.filter((d) => nums.some((n) => String(d.text || '').includes('第' + cn(n) + '条'))) : [];
       const extra = wanted.length ? wanted : contractDocs.slice(0, 3);
       for (const d of extra) {
         if (sources.some((s) => s.source === d.source && s.page === d.page)) continue;
