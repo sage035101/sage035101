@@ -1882,7 +1882,7 @@ async function handleChat(req, res, owner = '', session = null) {
     answerCache.delete(cacheKey);
     cached = null;
   }
-  send('meta', { sources: [], imageText: visionText || '', model: MODEL, peers: cached ? [] : peers.map((p) => ({ id: p.id, label: p.label, status: 'pending' })), quota });
+  send('meta', { sources: sources.slice(0, 8).map((s) => ({ title: s.title, source: s.source, page: s.page })), imageText: visionText || '', model: MODEL, peers: cached ? [] : peers.map((p) => ({ id: p.id, label: p.label, status: 'pending' })), quota });
   if (cached) {
     send('delta', { text: cached.text });
     send('final', { text: cached.text });
