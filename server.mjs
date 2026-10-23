@@ -13,6 +13,7 @@ const KB_FILE = path.join(DATA, 'kb.jsonl');
 const WRITING_FILE = path.join(DATA, 'writing_method.jsonl');
 const JINGJIANG_FILES = [1, 2, 3].map((i) => path.join(DATA, `jingjiang_${String(i).padStart(2, '0')}.jsonl`));
 const CONTRACT_FILE = path.join(DATA, 'contract_interpretations.jsonl');
+const CONTRACT_GENERAL_FILE = path.join(DATA, 'contract_general_full.jsonl');
 const CIVIL_FILE = path.join(DATA, 'civil_interpretations.jsonl');
 const COURSE_FILES = fs.readdirSync(DATA).filter((f) => /^(minfa|xiezuo|beisong)_asr_\d+\.jsonl$/.test(f)).sort().map((f) => path.join(DATA, f));
 const UPLOAD_FILE = path.join(DATA, 'uploads.jsonl');
@@ -367,6 +368,65 @@ function codeHasBudget(rec) {
   return limit > 0 && limit <= 260;
 }
 const clientIp = (req) => String(req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.socket?.remoteAddress || 'unknown').split(',')[0].trim();
+const OFFICIAL_HOSTS = ['court.gov.cn', 'spp.gov.cn', 'gov.cn', 'npc.gov.cn', 'rmfyb.com', 'chinacourt.cn'];
+const officialPageCache = new Map();
+function isOfficialHost(host) {
+  host = String(host || '').toLowerCase();
+  return OFFICIAL_HOSTS.some((h) => host === h || host.endsWith('.' + h));
+}
+function htmlToPlain(html) {
+  return String(html || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<[^>]+>/g, '\n')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+async function fetchOfficialPage(rawUrl) {
+  let u;
+  try { u = new URL(rawUrl); } catch { return null; }
+  if (!/^https?:$/.test(u.protocol) || !isOfficialHost(u.hostname) || u.username || u.password) return null;
+  const key = u.href;
+  const hit = officialPageCache.get(key);
+  if (hit && hit.expires > nowMs()) return hit.data;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 12000);
+  try {
+    const r = await fetch(u.href, {
+      redirect: 'follow',
+      signal: ac.signal,
+      headers: { 'user-agent': 'Mozilla/5.0 (compatible; SageLegal/1.0)', accept: 'text/html,text/plain' },
+    });
+    if (!r.ok) return null;
+    const finalUrl = r.url || u.href;
+    const fu = new URL(finalUrl);
+    if (!isOfficialHost(fu.hostname)) return null;
+    const type = String(r.headers.get('content-type') || '');
+    if (!/text\/html|text\/plain|application\/xhtml/i.test(type)) return null;
+    const raw = await r.text();
+    if (!raw || raw.length > 4_000_000) return null;
+    const titleMatch = raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const title = htmlToPlain(titleMatch ? titleMatch[1] : '').slice(0, 160) || fu.hostname;
+    const text = htmlToPlain(raw).replace(/\n{2,}/g, '\n').slice(0, 18000);
+    if (text.length < 80) return null;
+    const data = { url: finalUrl, title, text };
+    officialPageCache.set(key, { data, expires: nowMs() + 10 * 60 * 1000 });
+    if (officialPageCache.size > 60) {
+      const first = officialPageCache.keys().next().value;
+      officialPageCache.delete(first);
+    }
+    return data;
+  } catch { return null; } finally { clearTimeout(timer); }
+}
+
 function rateLimit(key, limit, windowMs) {
   const t = nowMs();
   const b = rateBuckets.get(key) || { start: t, n: 0 };
@@ -909,6 +969,7 @@ function sourceWeight(doc, query) {
   if (doc.source.includes('2027精讲一本通')) w += /刑法|案例|行为|构成|犯罪|罪数/.test(query) ? 0.2 : 0.05;
   if (doc.source.includes('2027背诵一本通')) w += /逻辑|思路|展开|背诵|要件|例外|刑法/.test(query) ? 0.3 : 0.1;
   if (doc.source.includes('合同类司法解释')) w += /合同|司法解释|民法|买卖|借款|租赁|建设|担保/.test(query) ? 0.4 : 0.1;
+  if (doc.source.includes('合同编通则解释全文')) w += /合同|司法解释|民法|以物抵债|买卖|借款|租赁|建设|担保/.test(query) ? 0.4 : 0.1;
   if (doc.source.includes('八部民法司法解释')) w += /民法|侵权|婚姻|彩礼|消费|建设工程|交通|知识产权|矿产/.test(query) ? 0.35 : 0.08;
   if (mnemonic && /口诀|速记|背诵逻辑|记忆方法|顺口溜/.test(doc.text || '')) w += 0.28;
   if (doc.source.includes('司法解释')) w += /司法解释|法释|条文|解释/.test(query) ? 0.22 : -0.12;
@@ -921,7 +982,7 @@ function sourceWeight(doc, query) {
 }
 
 function rebuildIndex() {
-  docs = [...readJsonl(KB_FILE), ...readJsonl(WRITING_FILE), ...JINGJIANG_FILES.flatMap((f) => readJsonl(f)), ...COURSE_FILES.flatMap((f) => readJsonl(f)), ...readJsonl(CONTRACT_FILE), ...readJsonl(CIVIL_FILE), ...readJsonl(UPLOAD_FILE)];
+  docs = [...readJsonl(KB_FILE), ...readJsonl(WRITING_FILE), ...JINGJIANG_FILES.flatMap((f) => readJsonl(f)), ...COURSE_FILES.flatMap((f) => readJsonl(f)), ...readJsonl(CONTRACT_GENERAL_FILE), ...readJsonl(CIVIL_FILE), ...readJsonl(UPLOAD_FILE)];
   for (let i = 0; i < docs.length; i++) docs[i]._id = i;
   postings = new Map();
   docLens = new Array(docs.length);
@@ -1288,6 +1349,7 @@ function buildSystemPrompt({ subject, mode, sources, contextBrief, sourceChars =
 8. 回答中不要出现具体老师姓名；需要指代时用“教材”“课程”“通说”。
 9. 长案例、多小问：先用 1—3 行分别给出每个小问的结论，再展开理由；正文必须尽早出现，不要把全部内容压在思考里。若输出额度紧张，优先保证每个小问都有结论和核心依据。
 10. 默认言简意赅、通俗易懂：先给结论，再分点说理由；能用短句就不用长段；专业术语第一次出现时用一句白话解释；简单问题控制在 300—600 字，复杂案例按“行为/争点/结论”分点展开，不堆砌学术黑话。
+11. 资料中出现官网链接时，优先使用抓到的官网原文并标注来源；只引用实际抓到的内容，不编造链接或条文。非官网链接不访问、不引用。
 
 【本轮信息】
 当前科目倾向：${eff}
@@ -1696,6 +1758,14 @@ async function handleChat(req, res, owner = '', session = null) {
   if (vision.usage) recordUsage(session?.role || 'guest', usagePayer, vision.usage, session?.role === 'guest' ? session.code : '');
   const visionText = vision.text;
   const effectiveQuery = query || visionText;
+  // 只抓取官网链接；不访问用户给出的非官方网站
+  const officialDocs = [];
+  const officialUrls = [...new Set((String(effectiveQuery).match(/https?:\/\/[^\s<>"'）)]+/g) || [])
+    .map((u) => u.replace(/[，。；：、)）]+$/, '')))].slice(0, 2);
+  for (const url of officialUrls) {
+    const doc = await fetchOfficialPage(url);
+    if (doc) officialDocs.push(doc);
+  }
   const searchable = (visionText || query)
     .replace(/这张图|图片|图中|如图|上图|下图|主要|讲了什么|说的是什么|是什么|这道题|选什么|怎么做|请分析|分析一下/g, ' ')
     .replace(/[\s，。！？、；：]/g, '')
@@ -1715,9 +1785,16 @@ async function handleChat(req, res, owner = '', session = null) {
   const searchQuery = isMnemonic ? `${retrievalQuery} 口诀 速记 背诵逻辑` : retrievalQuery;
   const contractQuery = /合同|司法解释|以物抵债|买卖|借款|租赁|建设工程|担保/.test(effectiveQuery);
   const sources = searchQuery && (visionText || !hasImages || searchable.length >= 8) ? search(searchQuery, subject, sourceLimit, owner) : [];
-  // 合同类司法解释直连：检索失败时也保证导入的合同汇编进入上下文
+  for (const d of officialDocs) {
+    sources.unshift({ n: 1, subject: subject || '民法', title: d.title, source: d.url, page: 1, text: d.text, snippet: d.text.slice(0, 220), score: 120 });
+  }
+  if (officialDocs.length) sources.splice(sourceLimit);
+  // 合同类司法解释直连：检索失败时也保证导入的合同全文进入上下文
   if (contractQuery) {
-    const contractDocs = docs.filter((d) => String(d.source || '').includes('合同类司法解释'));
+    const contractDocs = docs.filter((d) => {
+      const s = String(d.source || '');
+      return s.includes('合同类司法解释') || s.includes('合同编通则解释全文');
+    });
     if (contractDocs.length) {
       const cn = (n) => {
         const d = ['零','一','二','三','四','五','六','七','八','九'];
@@ -1755,7 +1832,7 @@ async function handleChat(req, res, owner = '', session = null) {
     query: retrievalQuery || effectiveQuery,
     sources: sources.slice(0, mode === 'detail' ? 10 : (isMnemonic || isCaseLookup) ? 8 : isSubjectSpecific ? 6 : isComplex ? 6 : 4),
     contextBrief,
-    sourceChars: contractQuery ? 3200 : mode === 'detail' ? 1400 : isMnemonic ? 1200 : isCaseLookup ? 1100 : isSubjectSpecific ? 850 : isComplex ? 900 : 700,
+    sourceChars: officialDocs.length ? 6000 : contractQuery ? 3200 : mode === 'detail' ? 1400 : isMnemonic ? 1200 : isCaseLookup ? 1100 : isSubjectSpecific ? 850 : isComplex ? 900 : 700,
   });
   const messages = buildMessages(history.slice(-12));
   if (!messages.length) return sendJson(res, 400, { error: '没有可发送的消息' });
@@ -1805,7 +1882,7 @@ async function handleChat(req, res, owner = '', session = null) {
     answerCache.delete(cacheKey);
     cached = null;
   }
-  send('meta', { sources: [], model: MODEL, peers: cached ? [] : peers.map((p) => ({ id: p.id, label: p.label, status: 'pending' })), quota });
+  send('meta', { sources: [], imageText: visionText || '', model: MODEL, peers: cached ? [] : peers.map((p) => ({ id: p.id, label: p.label, status: 'pending' })), quota });
   if (cached) {
     send('delta', { text: cached.text });
     send('final', { text: cached.text });
