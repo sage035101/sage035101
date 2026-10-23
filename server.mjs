@@ -1725,11 +1725,20 @@ async function handleChat(req, res, owner = '', session = null) {
         return d[t] + '十' + (r ? d[r] : '');
       };
       const nums = [...effectiveQuery.matchAll(/第\s*(\d{1,3})\s*条/g)].map((x) => Number(x[1]));
-      const wanted = nums.length ? contractDocs.filter((d) => nums.some((n) => String(d.text || '').includes('第' + cn(n) + '条'))) : [];
-      const extra = wanted.length ? wanted : contractDocs.slice(0, 3);
+      const allContract = contractDocs.map((d) => String(d.text || '')).join('\n');
+      const articleText = (n) => {
+        const label = '第' + cn(n) + '条';
+        const i = allContract.indexOf(label);
+        if (i < 0) return '';
+        const next = '第' + cn(n + 1) + '条';
+        const j = allContract.indexOf(next, i + label.length);
+        return j > i ? allContract.slice(i, j) : allContract.slice(i, i + 4000);
+      };
+      const wanted = nums.map((n) => ({ n, text: articleText(n) })).filter((x) => x.text);
+      const extra = wanted.length ? wanted.map((x) => ({ source: '合同编通则解释·第' + cn(x.n) + '条', page: x.n, subject: '民法', title: '第' + cn(x.n) + '条', text: x.text })) : contractDocs.slice(0, 3);
       for (const d of extra) {
         if (sources.some((s) => s.source === d.source && s.page === d.page)) continue;
-        sources.unshift({ n: 1, subject: d.subject, title: titleOf(d), source: d.source, page: d.page, text: d.text, snippet: makeSnippet(d.text, effectiveQuery), score: 99 });
+        sources.unshift({ n: 1, subject: d.subject || '民法', title: d.title || titleOf(d), source: d.source, page: d.page, text: d.text, snippet: makeSnippet(d.text, effectiveQuery), score: 99 });
         if (sources.length >= sourceLimit) break;
       }
       sources.splice(sourceLimit);
