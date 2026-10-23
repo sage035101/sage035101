@@ -1736,10 +1736,12 @@ async function handleChat(req, res, owner = '', session = null) {
       };
       const wanted = nums.map((n) => ({ n, text: articleText(n) })).filter((x) => x.text);
       const extra = wanted.length ? wanted.map((x) => ({ source: '合同编通则解释·第' + cn(x.n) + '条', page: x.n, subject: '民法', title: '第' + cn(x.n) + '条', text: x.text })) : contractDocs.slice(0, 3);
+      let added = 0;
       for (const d of extra) {
         if (sources.some((s) => s.source === d.source && s.page === d.page)) continue;
         sources.unshift({ n: 1, subject: d.subject || '民法', title: d.title || titleOf(d), source: d.source, page: d.page, text: d.text, snippet: makeSnippet(d.text, effectiveQuery), score: 99 });
-        if (sources.length >= sourceLimit) break;
+        added++;
+        if (added >= sourceLimit) break;
       }
       sources.splice(sourceLimit);
       sources.forEach((s, i) => { s.n = i + 1; });
