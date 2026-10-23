@@ -251,7 +251,8 @@ function peersHtml(peers) {
 
 function messageHtml(m) {
   if (m.role === 'user') {
-    const imgs = (m.thumbs || []).map((t) => `<img src="${t}" alt="上传的题目图片">`).join('');
+    const srcs = m.fulls && m.fulls.length ? m.fulls : (m.thumbs || []);
+    const imgs = (m.thumbs || []).map((t, i) => `<img src="${t}" data-full="${srcs[i] || t}" class="zoomable" alt="上传的题目图片" title="点击查看大图">`).join('');
     return `<article class="msg user" data-id="${m.id}">
       <div class="avatar">你</div>
       <div class="msg-body">
@@ -278,6 +279,31 @@ function renderMessages() {
   $('#welcome').style.display = state.messages.length ? 'none' : '';
   scrollBottom();
 }
+function openLightbox(src) {
+  const box = $('#lightbox');
+  if (!box || !src) return;
+  $('#lightboxImg').src = src;
+  box.hidden = false;
+  document.body.classList.add('lightbox-open');
+}
+function closeLightbox() {
+  const box = $('#lightbox');
+  if (!box) return;
+  box.hidden = true;
+  $('#lightboxImg').removeAttribute('src');
+  document.body.classList.remove('lightbox-open');
+}
+$('#lightbox')?.addEventListener('click', (e) => {
+  if (e.target.id === 'lightbox' || e.target.id === 'lightboxClose') closeLightbox();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeLightbox();
+});
+$('#messages')?.addEventListener('click', (e) => {
+  const img = e.target.closest('.user-imgs img.zoomable');
+  if (!img) return;
+  openLightbox(img.dataset.full || img.src);
+});
 function setSubject(s) {
   if (!SUBJECTS.includes(s)) return;
   state.subject = s;
@@ -498,38 +524,187 @@ input.addEventListener('input', autoResize);
 function renderAttachments() {
   const box = $('#attachments');
   box.classList.toggle('show', state.pending.length > 0);
-  box.innerHTML = state.pending.map((p) => `<div class="att"><img src="${p.thumb}" alt="待发送图片"><button data-rm="${p.id}" title="移除">×</button></div>`).join('');
+  box.innerHTML = state.pending.map((p) => `<div class="att" data-id="${p.id}"><img src="${p.thumb}" data-full="${p.full}" class="zoomable" alt="待发送图片" title="点击预览"><button data-rm="${p.id}" title="移除">×</button></div>`).join('');
 }
 $('#attachments').addEventListener('click', (e) => {
   const b = e.target.closest('[data-rm]');
-  if (!b) return;
-  state.pending = state.pending.filter((p) => p.id !== b.dataset.rm);
-  renderAttachments();
+  if (b) {
+    state.pending = state.pending.filter((p) => p.id !== b.dataset.rm);
+    renderAttachments();
+    return;
+  }
+  const img = e.target.closest('.att img');
+  if (img) openLightbox(img.dataset.full || img.src);
 });
 
-async function addFile(file) {
-  if (!file || !file.type.startsWith('image/')) return;
-  if (file.size > 12 * 1024 * 1024) return toast('图片超过 12MB，请压缩后再试');
+/* Crop before adding. Files are queued so multiple selection still works. */
+const cropQueue = [];
+let cropBusy = false;
+let cropCtx = null;
+
+function pumpCropQueue() {
+  if (cropBusy || !cropQueue.length) return;
+  cropBusy = true;
+  const file = cropQueue.shift();
+  openCrop(file).catch(() => {
+    cropBusy = false;
+    finishAdd(file, null).finally(pumpCropQueue);
+  });
+}
+
+function closeCropDialog() {
+  const d = $('#cropDialog');
+  if (d?.open) d.close();
+  if (cropCtx?.url) URL.revokeObjectURL(cropCtx.url);
+  cropCtx = null;
+}
+
+async function openCrop(file) {
+  if (state.pending.length >= 5) {
+    toast('一次最多发送 5 张图片');
+    cropBusy = false;
+    pumpCropQueue();
+    return;
+  }
+  const dialog = $('#cropDialog');
+  const img = $('#cropImg');
+  if (!dialog || !img || typeof dialog.showModal !== 'function') {
+    cropBusy = false;
+    await finishAdd(file, null);
+    pumpCropQueue();
+    return;
+  }
+  const url = URL.createObjectURL(file);
+  img.src = url;
+  try { await img.decode(); } catch { await new Promise((r) => { img.onload = r; }); }
+  const maxW = Math.min(window.innerWidth - 70, 700);
+  const maxH = Math.max(220, Math.min(window.innerHeight * 0.52, 460));
+  const scale = Math.min(1, maxW / img.naturalWidth, maxH / img.naturalHeight);
+  const dw = Math.max(1, Math.round(img.naturalWidth * scale));
+  const dh = Math.max(1, Math.round(img.naturalHeight * scale));
+  $('#cropStage').style.width = dw + 'px';
+  $('#cropStage').style.height = dh + 'px';
+  img.style.width = dw + 'px';
+  img.style.height = dh + 'px';
+  const bw = Math.round(dw * 0.8), bh = Math.round(dh * 0.8);
+  cropCtx = {
+    file, url, img, scale,
+    stageW: dw, stageH: dh,
+    box: { x: Math.round((dw - bw) / 2), y: Math.round((dh - bh) / 2), w: bw, h: bh },
+    done: false,
+  };
+  $('#cropBox').style.cssText = `left:${cropCtx.box.x}px;top:${cropCtx.box.y}px;width:${cropCtx.box.w}px;height:${cropCtx.box.h}px`;
+  dialog.showModal();
+}
+
+function cropBoxStyle() {
+  if (!cropCtx) return;
+  const b = cropCtx.box;
+  $('#cropBox').style.cssText = `left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px`;
+}
+
+function cropSourceRegion() {
+  if (!cropCtx) return null;
+  const b = cropCtx.box, s = cropCtx.scale;
+  const x = Math.max(0, Math.min(cropCtx.img.naturalWidth - 1, Math.round(b.x / s)));
+  const y = Math.max(0, Math.min(cropCtx.img.naturalHeight - 1, Math.round(b.y / s)));
+  const w = Math.max(8, Math.min(cropCtx.img.naturalWidth - x, Math.round(b.w / s)));
+  const h = Math.max(8, Math.min(cropCtx.img.naturalHeight - y, Math.round(b.h / s)));
+  return { x, y, w, h, sx: cropCtx.img.naturalWidth, sy: cropCtx.img.naturalHeight };
+}
+
+function finishCrop(region) {
+  if (!cropCtx || cropCtx.done) return;
+  cropCtx.done = true;
+  const file = cropCtx.file;
+  closeCropDialog();
+  finishAdd(file, region).finally(() => {
+    cropBusy = false;
+    pumpCropQueue();
+  });
+}
+
+function skipCrop() {
+  if (cropCtx) cropCtx.done = true;
+  closeCropDialog();
+  cropBusy = false;
+  pumpCropQueue();
+}
+
+/* drag / resize crop box */
+let cropDrag = null;
+function onCropPointerDown(e) {
+  if (!cropCtx) return;
+  e.preventDefault();
+  const handle = e.target.closest('#cropHandle');
+  cropDrag = {
+    mode: handle ? 'resize' : 'move',
+    startX: e.clientX, startY: e.clientY,
+    box: { ...cropCtx.box },
+  };
+  document.addEventListener('pointermove', onCropPointerMove);
+  document.addEventListener('pointerup', onCropPointerUp, { once: true });
+}
+function onCropPointerMove(e) {
+  if (!cropCtx || !cropDrag) return;
+  e.preventDefault();
+  const dx = e.clientX - cropDrag.startX, dy = e.clientY - cropDrag.startY;
+  const b = cropCtx.box;
+  const orig = cropDrag.box;
+  if (cropDrag.mode === 'move') {
+    b.x = Math.max(0, Math.min(cropCtx.stageW - b.w, orig.x + dx));
+    b.y = Math.max(0, Math.min(cropCtx.stageH - b.h, orig.y + dy));
+  } else {
+    b.w = Math.max(32, Math.min(cropCtx.stageW - b.x, orig.w + dx));
+    b.h = Math.max(32, Math.min(cropCtx.stageH - b.y, orig.h + dy));
+  }
+  cropBoxStyle();
+}
+function onCropPointerUp() {
+  cropDrag = null;
+  document.removeEventListener('pointermove', onCropPointerMove);
+}
+$('#cropBox')?.addEventListener('pointerdown', onCropPointerDown);
+$('#btnCropApply')?.addEventListener('click', () => finishCrop(cropSourceRegion()));
+$('#btnCropFull')?.addEventListener('click', () => finishCrop(null));
+$('#btnCropCancel')?.addEventListener('click', skipCrop);
+$('#btnCropClose')?.addEventListener('click', skipCrop);
+$('#cropDialog')?.addEventListener('cancel', (e) => { e.preventDefault(); skipCrop(); });
+
+async function finishAdd(file, region) {
   if (state.pending.length >= 5) return toast('一次最多发送 5 张图片');
   try {
     const bmp = await createImageBitmap(file);
+    const sx = region ? region.x : 0;
+    const sy = region ? region.y : 0;
+    const sw = region ? region.w : bmp.width;
+    const sh = region ? region.h : bmp.height;
     const max = 2200;
-    const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
-    const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
+    const scale = Math.min(1, max / Math.max(sw, sh));
+    const w = Math.max(1, Math.round(sw * scale));
+    const h = Math.max(1, Math.round(sh * scale));
     const canvas = document.createElement('canvas');
     canvas.width = w; canvas.height = h;
-    canvas.getContext('2d').drawImage(bmp, 0, 0, w, h);
+    canvas.getContext('2d').drawImage(bmp, sx, sy, sw, sh, 0, 0, w, h);
     const full = canvas.toDataURL('image/jpeg', 0.9);
     const tScale = Math.min(1, 340 / Math.max(w, h));
-    const tw = Math.round(w * tScale), th = Math.round(h * tScale);
     const tc = document.createElement('canvas');
-    tc.width = tw; tc.height = th;
-    tc.getContext('2d').drawImage(canvas, 0, 0, tw, th);
+    tc.width = Math.max(1, Math.round(w * tScale));
+    tc.height = Math.max(1, Math.round(h * tScale));
+    tc.getContext('2d').drawImage(canvas, 0, 0, tc.width, tc.height);
     const thumb = tc.toDataURL('image/jpeg', 0.72);
     state.pending.push({ id: uid(), full, thumb });
     renderAttachments();
     bmp.close?.();
   } catch { toast('图片读取失败，请换一张试试'); }
+}
+
+function addFile(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  if (file.size > 12 * 1024 * 1024) return toast('图片超过 12MB，请压缩后再试');
+  if (state.pending.length + cropQueue.length >= 5) return toast('一次最多发送 5 张图片');
+  cropQueue.push(file);
+  pumpCropQueue();
 }
 
 $('#btnAttach').addEventListener('click', () => {
@@ -723,7 +898,7 @@ async function send(opts = {}) {
     userMsg = reuseMsg;
     renderMessages();
   } else {
-    userMsg = { id: uid(), role: 'user', text, thumbs, ts: Date.now() };
+    userMsg = { id: uid(), role: 'user', text, thumbs, fulls: imgs, ts: Date.now() };
     state.messages.push(userMsg);
     const cur = currentConversation();
     if (!cur.title || cur.title === '新对话') cur.title = titleFromMessages(state.messages);
