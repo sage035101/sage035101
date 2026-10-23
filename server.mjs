@@ -403,7 +403,11 @@ async function fetchOfficialPage(rawUrl) {
     const r = await fetch(u.href, {
       redirect: 'follow',
       signal: ac.signal,
-      headers: { 'user-agent': 'Mozilla/5.0 (compatible; SageLegal/1.0)', accept: 'text/html,text/plain' },
+      headers: {
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8',
+        'accept-language': 'zh-CN,zh;q=0.9,en;q=0.6',
+      },
     });
     if (!r.ok) return null;
     const finalUrl = r.url || u.href;
