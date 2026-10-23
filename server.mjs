@@ -12,6 +12,7 @@ const DATA = path.join(ROOT, 'data');
 const KB_FILE = path.join(DATA, 'kb.jsonl');
 const WRITING_FILE = path.join(DATA, 'writing_method.jsonl');
 const JINGJIANG_FILES = [1, 2, 3].map((i) => path.join(DATA, `jingjiang_${String(i).padStart(2, '0')}.jsonl`));
+const COURSE_FILES = fs.readdirSync(DATA).filter((f) => /^(minfa|xiezuo|beisong)_asr_\d+\.jsonl$/.test(f)).sort().map((f) => path.join(DATA, f));
 const UPLOAD_FILE = path.join(DATA, 'uploads.jsonl');
 const GUEST_FILE = process.env.GUEST_CODES_FILE || path.join(DATA, 'guest_codes.json');
 const GUEST_BAK = GUEST_FILE + '.bak';
@@ -904,6 +905,7 @@ function sourceWeight(doc, query) {
   if (doc.source.includes('写作宝典')) w += /案例|行为|拆解|分析|主观|写作|刑法/.test(query) ? 0.45 : 0.1;
   if (doc.source.includes('刑法案例方法')) w += /案例|行为|拆解|分析|几个行为|写作/.test(query) ? 0.6 : 0.1;
   if (doc.source.includes('2027精讲一本通')) w += /刑法|案例|行为|构成|犯罪|罪数/.test(query) ? 0.2 : 0.05;
+  if (doc.source.includes('2027背诵一本通')) w += /逻辑|思路|展开|背诵|要件|例外|刑法/.test(query) ? 0.3 : 0.1;
   if (mnemonic && /口诀|速记|背诵逻辑|记忆方法|顺口溜/.test(doc.text || '')) w += 0.28;
   if (doc.source.includes('司法解释')) w += /司法解释|法释|条文|解释/.test(query) ? 0.22 : -0.12;
   if (doc.source.includes('官方索引')) w -= 0.05;
@@ -915,7 +917,7 @@ function sourceWeight(doc, query) {
 }
 
 function rebuildIndex() {
-  docs = [...readJsonl(KB_FILE), ...readJsonl(WRITING_FILE), ...JINGJIANG_FILES.flatMap((f) => readJsonl(f)), ...readJsonl(UPLOAD_FILE)];
+  docs = [...readJsonl(KB_FILE), ...readJsonl(WRITING_FILE), ...JINGJIANG_FILES.flatMap((f) => readJsonl(f)), ...COURSE_FILES.flatMap((f) => readJsonl(f)), ...readJsonl(UPLOAD_FILE)];
   for (let i = 0; i < docs.length; i++) docs[i]._id = i;
   postings = new Map();
   docLens = new Array(docs.length);
@@ -1222,6 +1224,12 @@ function buildSystemPrompt({ subject, mode, sources, contextBrief, sourceChars =
 4. 用“插入式造句法”写理由：甲因……负有……义务/实施……行为，有能力……，造成……结果，主观上……，因此构成……罪。
 5. 最后写犯罪形态、量刑情节、易错点；多个行为能否合并，要看是否同一法益、同一故意、同一阶段，不能为简洁强行合并。
 6. 上述方法只在材料支持时使用；材料没有覆盖的行为，明确标“材料未覆盖”，不要编事实。
+
+【背诵一本通逻辑展开】
+1. 涉及背诵一本通内容时，先展开逻辑链：上位概念 → 体系定位 → 构成要件 → 判断顺序 → 例外/易错 → 结论；不要只甩结论。
+2. 用户问“怎么判断/为什么/几个行为”时，按逻辑链一步步推，不把背诵口诀当论证。
+3. 口诀只在材料明确标注原文时引用；没有原文就讲法理和判断顺序，不自创口诀。
+4. 背诵一本通与精讲、写作宝典、教材、指导性案例交叉核对；冲突时先说明差异，再按法硕口径取舍。
 
 【口诀还原】
 1. 用户问“口诀、记忆、背诵、带背、视频里怎么说”时，必须先在【参考材料】的“B站2027课程/背诵一本通”中找原文；找到后按“口诀原文 → 逐词对应 → 教材解释/例外 → 易错点”回答。
