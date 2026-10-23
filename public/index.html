@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#f6f2e9">
 <title>Sage · 答疑服务</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23436554'/%3E%3Ctext x='32' y='44' font-size='36' text-anchor='middle' fill='%23f6f2e9' font-family='serif'%3E%E6%B3%95%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="./styles.css?v=19">
+<link rel="stylesheet" href="./styles.css?v=21">
 </head>
 <body>
 <header class="topbar">
@@ -252,7 +252,31 @@
   </div>
 </div>
 
+<dialog id="cropDialog" class="dialog crop-dialog">
+  <div class="dialog-card">
+    <div class="dialog-head">
+      <div><p class="eyebrow">CROP</p><h2>剪裁图片</h2></div>
+      <button class="x" id="btnCropClose" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="crop-stage" id="cropStage">
+      <img id="cropImg" alt="待剪裁图片">
+      <div class="crop-box" id="cropBox"><span class="crop-handle" id="cropHandle"></span></div>
+    </div>
+    <p class="fine crop-tip">拖动选框移动，拖右下角调整大小；也可以直接用原图。</p>
+    <div class="dialog-actions">
+      <button type="button" class="ghost" id="btnCropCancel">取消</button>
+      <button type="button" class="ghost" id="btnCropFull">用原图</button>
+      <button type="button" class="primary" id="btnCropApply">剪裁并添加</button>
+    </div>
+  </div>
+</dialog>
+
+<div class="lightbox" id="lightbox" hidden>
+  <button class="lightbox-close" id="lightboxClose" type="button" aria-label="关闭">×</button>
+  <img id="lightboxImg" alt="查看大图">
+</div>
+
 <div class="toast" id="toast" role="status"></div>
-<script type="module" src="./app.js?v=20"></script>
+<script type="module" src="./app.js?v=21"></script>
 </body>
 </html>
