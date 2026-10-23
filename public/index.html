@@ -1,10 +1,10 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#f6f2e9">
-<title>Sage 路 绛旂枒鏈嶅姟</title>
+<title>Sage · 答疑服务</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23436554'/%3E%3Ctext x='32' y='44' font-size='36' text-anchor='middle' fill='%23f6f2e9' font-family='serif'%3E%E6%B3%95%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="./styles.css?v=21">
 </head>
@@ -13,29 +13,29 @@
   <div class="brand">
     <span class="brand-seal" id="brandSeal">
       <img id="brandLogo" src="./logo-mark.png" alt="Sage" onload="this.parentElement.classList.add('has-logo')" onerror="this.style.display='none';this.parentElement.classList.remove('has-logo')">
-      <span class="logo-fallback">娉?/span>
+      <span class="logo-fallback">法</span>
     </span>
     <div class="brand-text">
       <strong>Sage</strong>
-      <span>绛旂枒鏈嶅姟</span>
+      <span>答疑服务</span>
     </div>
   </div>
-  <div class="blessing" aria-label="Sage 绁濇偍蹇冩兂浜嬫垚锛?>Sage 绁濇偍蹇冩兂浜嬫垚锛?/div>
+  <div class="blessing" aria-label="Sage 祝您心想事成！">Sage 祝您心想事成！</div>
   <div class="top-actions">
     <span class="quota-pill" id="quotaPill" hidden></span>
-    <button class="icon-btn" id="btnLibrary" title="璧勬枡搴?>
+    <button class="icon-btn" id="btnLibrary" title="资料库">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z"/><path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H20"/><path d="M8 7h8M8 11h5"/></svg>
-      <span>璧勬枡搴?/span>
+      <span>资料库</span>
     </button>
-    <button class="icon-btn" id="btnSettings" title="璁剧疆">
+    <button class="icon-btn" id="btnSettings" title="设置">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.05a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.05a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.05a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.15.6.66 1 1.27 1H21a2 2 0 1 1 0 4h-.05a1.7 1.7 0 0 0-1.55 1Z"/></svg>
-      <span>璁剧疆</span>
+      <span>设置</span>
     </button>
-    <button class="new-btn" id="btnNew" title="寮€濮嬫柊瀵硅瘽">
+    <button class="new-btn" id="btnNew" title="开始新对话">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-      <span>鏂板璇?/span>
+      <span>新对话</span>
     </button>
-    <button class="menu-btn" id="btnMenu" aria-label="鍘嗗彶璁板綍">
+    <button class="menu-btn" id="btnMenu" aria-label="历史记录">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
     </button>
   </div>
@@ -45,52 +45,52 @@
   <aside class="sidebar" id="sidebar">
     <button class="side-new" id="btnSideNew">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-      <span>鏂板璇?/span>
+      <span>新对话</span>
     </button>
     <div class="hist-search">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-      <input id="historySearch" placeholder="鎼滅储鍘嗗彶" aria-label="鎼滅储鍘嗗彶">
+      <input id="historySearch" placeholder="搜索历史" aria-label="搜索历史">
     </div>
     <div class="hist-tabs">
-      <button class="active" data-view="all">鍏ㄩ儴</button>
-      <button data-view="archived">宸插綊妗?/button>
-      <button class="hist-edit" id="btnMergeMode" title="鎵归噺鏁寸悊锛氬悎骞跺璇?>鏁寸悊</button>
+      <button class="active" data-view="all">全部</button>
+      <button data-view="archived">已归档</button>
+      <button class="hist-edit" id="btnMergeMode" title="批量整理：合并对话">整理</button>
     </div>
     <div class="hist-list" id="historyList"></div>
     <div class="merge-bar" id="mergeBar" hidden>
-      <span id="mergeCount">宸查€?0 椤?/span>
-      <button id="btnMergeGo" disabled>鍚堝苟</button>
-      <button id="btnMergeCancel">鍙栨秷</button>
+      <span id="mergeCount">已选 0 项</span>
+      <button id="btnMergeGo" disabled>合并</button>
+      <button id="btnMergeCancel">取消</button>
     </div>
     <div class="side-foot">
-      <div class="status" id="status"><span class="pulse"></span><span id="statusText">杩炴帴涓€?/span></div>
+      <div class="status" id="status"><span class="pulse"></span><span id="statusText">连接中…</span></div>
       <div class="side-links">
-        <button id="sideLibrary">璧勬枡搴?/button>
-        <button id="sideSettings">璁剧疆</button>
+        <button id="sideLibrary">资料库</button>
+        <button id="sideSettings">设置</button>
       </div>
-      <p>瀵嗙爜璁块棶 路 鑷祴鐗?br>瀵硅瘽浠呬繚瀛樺湪鏈満</p>
+      <p>密码访问 · 自测版<br>对话仅保存在本机</p>
     </div>
   </aside>
   <div class="sidebar-mask" id="sidebarMask"></div>
 
   <main class="main">
     <div class="subject-bar" id="subjectBar">
-      <button class="active" data-subject="鍏ㄩ儴">鍏ㄩ儴</button>
-      <button data-subject="鍒戞硶">鍒戞硶</button>
-      <button data-subject="姘戞硶">姘戞硶</button>
-      <button data-subject="娉曠悊">娉曠悊瀛?/button>
-      <button data-subject="瀹硶">瀹硶瀛?/button>
-      <button data-subject="娉曞埗鍙?>娉曞埗鍙?/button>
+      <button class="active" data-subject="全部">全部</button>
+      <button data-subject="刑法">刑法</button>
+      <button data-subject="民法">民法</button>
+      <button data-subject="法理">法理学</button>
+      <button data-subject="宪法">宪法学</button>
+      <button data-subject="法制史">法制史</button>
     </div>
 
     <div class="chat" id="chat">
       <section class="welcome" id="welcome">
         <div class="welcome-mark" id="welcomeSeal">
           <img id="welcomeLogo" src="./logo.png" alt="Sage" onload="this.parentElement.classList.add('has-logo')" onerror="this.style.display='none';this.parentElement.classList.remove('has-logo')">
-          <span class="logo-fallback">娉?/span>
+          <span class="logo-fallback">法</span>
         </div>
-        <p class="eyebrow">SAGE 路 绛旂枒鏈嶅姟</p>
-        <p class="welcome-hint">鐩存帴杈撳叆闂锛屽紑濮嬬瓟鐤?/p>
+        <p class="eyebrow">SAGE · 答疑服务</p>
+        <p class="welcome-hint">直接输入问题，开始答疑</p>
       </section>
       <div class="messages" id="messages" aria-live="polite"></div>
     </div>
@@ -98,44 +98,44 @@
     <div class="composer-wrap">
       <div class="attachments" id="attachments"></div>
       <div class="composer" id="composer">
-        <button class="attach" id="btnAttach" title="涓婁紶棰樼洰鍥剧墖">
+        <button class="attach" id="btnAttach" title="上传题目图片">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>
         </button>
-        <button class="mic" id="btnMic" title="璇煶杈撳叆" aria-label="璇煶杈撳叆">
+        <button class="mic" id="btnMic" title="语音输入" aria-label="语音输入">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M19 11a7 7 0 0 1-14 0M12 18v3"/></svg>
         </button>
-        <textarea id="input" rows="1" placeholder="杈撳叆闂锛屾垨绮樿创棰樼洰鍥剧墖 / 鏂囧瓧鈥? aria-label="杈撳叆闂"></textarea>
-        <button class="send" id="btnSend" title="鍙戦€?>
+        <textarea id="input" rows="1" placeholder="输入问题，或粘贴题目图片 / 文字…" aria-label="输入问题"></textarea>
+        <button class="send" id="btnSend" title="发送">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12 20 4l-4 16-4-7-7-1Z"/><path d="m12 13 8-9"/></svg>
         </button>
-        <button class="stop" id="btnStop" title="鍋滄鐢熸垚" hidden>
+        <button class="stop" id="btnStop" title="停止生成" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
         </button>
       </div>
-      <div class="composer-hint"><span>Enter 鍙戦€?路 Shift + Enter 鎹㈣</span><span class="sep">路</span><span>鏀寔鍥剧墖 / 绮樿创 / 澶氳疆杩介棶</span><span class="mode-pill" id="modePill">绠€娲?/span></div>
+      <div class="composer-hint"><span>Enter 发送 · Shift + Enter 换行</span><span class="sep">·</span><span>支持图片 / 粘贴 / 多轮追问</span><span class="mode-pill" id="modePill">简洁</span></div>
     </div>
   </main>
 </div>
 
 <div class="hist-menu" id="histMenu" hidden>
-  <button data-act="rename">閲嶅懡鍚?/button>
-  <button data-act="archive">褰掓。</button>
-  <button data-act="merge">鍚堝苟鍒扳€?/button>
-  <button data-act="delete" class="danger">鍒犻櫎</button>
+  <button data-act="rename">重命名</button>
+  <button data-act="archive">归档</button>
+  <button data-act="merge">合并到…</button>
+  <button data-act="delete" class="danger">删除</button>
 </div>
 
 <dialog id="renameDialog" class="dialog small">
   <form method="dialog" class="dialog-card" id="renameForm">
     <div class="dialog-head">
-      <div><p class="eyebrow">RENAME</p><h2>閲嶅懡鍚嶅璇?/h2></div>
-      <button type="button" class="x" id="btnRenameClose" aria-label="鍏抽棴">脳</button>
+      <div><p class="eyebrow">RENAME</p><h2>重命名对话</h2></div>
+      <button type="button" class="x" id="btnRenameClose" aria-label="关闭">×</button>
     </div>
     <div class="field">
-      <input id="renameInput" maxlength="40" autocomplete="off" placeholder="缁欒繖娈靛璇濊捣涓悕瀛?>
+      <input id="renameInput" maxlength="40" autocomplete="off" placeholder="给这段对话起个名字">
     </div>
     <div class="dialog-actions">
       <span></span>
-      <button type="submit" class="primary">淇濆瓨</button>
+      <button type="submit" class="primary">保存</button>
     </div>
   </form>
 </dialog>
@@ -143,16 +143,16 @@
 <dialog id="editDialog" class="dialog small">
   <form method="dialog" class="dialog-card">
     <div class="dialog-head">
-      <div><p class="eyebrow">EDIT</p><h2>淇敼闂</h2></div>
-      <button type="button" class="x" id="btnEditClose" aria-label="鍏抽棴">脳</button>
+      <div><p class="eyebrow">EDIT</p><h2>修改问题</h2></div>
+      <button type="button" class="x" id="btnEditClose" aria-label="关闭">×</button>
     </div>
     <div class="field">
-      <textarea id="editText" rows="4" maxlength="8000" placeholder="淇敼閿欏埆瀛楁垨琛ㄨ堪"></textarea>
-      <p class="help">姣忔潯闂鍙兘淇敼涓€娆★紱杩欐淇敼涓嶆墸绛旂枒娆℃暟銆?/p>
+      <textarea id="editText" rows="4" maxlength="8000" placeholder="修改错别字或表述"></textarea>
+      <p class="help">每条问题只能修改一次；这次修改不扣答疑次数。</p>
     </div>
     <div class="dialog-actions">
       <span></span>
-      <button type="button" class="primary" id="btnEditSave">淇濆瓨骞堕噸绛?/button>
+      <button type="button" class="primary" id="btnEditSave">保存并重答</button>
     </div>
   </form>
 </dialog>
@@ -160,17 +160,17 @@
 <dialog id="renewDialog" class="dialog small">
   <form method="dialog" class="dialog-card">
     <div class="dialog-head">
-      <div><p class="eyebrow">RENEW</p><h2>棰濆害宸茬敤瀹?/h2></div>
-      <button type="button" class="x" id="btnRenewClose" aria-label="鍏抽棴">脳</button>
+      <div><p class="eyebrow">RENEW</p><h2>额度已用完</h2></div>
+      <button type="button" class="x" id="btnRenewClose" aria-label="关闭">×</button>
     </div>
     <div class="field">
-      <label for="renewCode">鏂扮殑 6 浣嶇瓟鐤戝瘑鐮?/label>
-      <input id="renewCode" inputmode="numeric" maxlength="6" placeholder="鍚戠珯闀胯涓€涓柊鐨?6 浣嶅瘑鐮? autocomplete="off">
-      <p class="help">杈撳叆鏂板瘑鐮佸悗鎭㈠瀵瑰簲鐨勭瓟鐤戞鏁帮紱鏃у瘑鐮佷笉鑳界户缁娇鐢ㄣ€?/p>
+      <label for="renewCode">新的 6 位答疑密码</label>
+      <input id="renewCode" inputmode="numeric" maxlength="6" placeholder="向站长要一个新的 6 位密码" autocomplete="off">
+      <p class="help">输入新密码后恢复对应的答疑次数；旧密码不能继续使用。</p>
     </div>
     <div class="dialog-actions">
       <span></span>
-      <button type="button" class="primary" id="btnRenewSave">缁敤</button>
+      <button type="button" class="primary" id="btnRenewSave">续用</button>
     </div>
   </form>
 </dialog>
@@ -178,106 +178,105 @@
 <dialog id="settingsDialog" class="dialog">
   <form method="dialog" class="dialog-card">
     <div class="dialog-head">
-      <div><p class="eyebrow">SETTINGS</p><h2>璁剧疆</h2></div>
-      <button class="x" value="close" aria-label="鍏抽棴">脳</button>
+      <div><p class="eyebrow">SETTINGS</p><h2>设置</h2></div>
+      <button class="x" value="close" aria-label="关闭">×</button>
     </div>
     <div class="field">
-      <label for="apiKey">DeepSeek API Key <small>锛堝彲閫夛級</small></label>
-      <input id="apiKey" type="password" placeholder="sk-鈥?鐣欑┖鍒欎娇鐢ㄧ珯闀挎巿鏉冮搴? autocomplete="off">
-      <p class="help">绔欓暱瀵嗙爜鍜?6 浣嶇瓟鐤戝瘑鐮佺櫥褰曟椂锛岀暀绌哄嵆鍙娇鐢ㄧ珯闀挎巿鏉冮搴︼紱濉簡鑷繁鐨?Key 鍒欎紭鍏堢敤浣犵殑銆侹ey 鍙繚瀛樺湪鏈満娴忚鍣ㄣ€?/p>
+      <label for="apiKey">DeepSeek API Key <small>（可选）</small></label>
+      <input id="apiKey" type="password" placeholder="sk-… 留空则使用站长授权额度" autocomplete="off">
+      <p class="help">站长密码和 6 位答疑密码登录时，留空即可使用站长授权额度；填了自己的 Key 则优先用你的。Key 只保存在本机浏览器。</p>
     </div>
     <div class="field">
-      <label>澶氭ā鍨嬪崗浣?/label>
-      <label class="checkline"><input id="multiToggle" type="checkbox"> 鍚屾椂璋冪敤璞嗗寘銆佸崈闂鏍告硶纭曠瓟妗?/label>
-      <p class="help">DeepSeek 璐熻矗涓荤瓟鍜屾祦寮忚緭鍑猴紱濉簡 Key 鐨勮眴鍖?鍗冮棶鍦ㄥ悗鍙板苟琛屼綔绛旓紝浣滀负琛ュ厖鍜屼氦鍙夋牳瀵癸紝涓嶆敼鍙樻暀鏉愬彛寰勩€?/p>
+      <label>多模型协作</label>
+      <label class="checkline"><input id="multiToggle" type="checkbox"> 同时调用豆包、千问复核法硕答案</label>
+      <p class="help">DeepSeek 负责主答和流式输出；填了 Key 的豆包/千问在后台并行作答，作为补充和交叉核对，不改变教材口径。</p>
     </div>
     <div class="field provider-field">
-      <label for="doubaoKey">璞嗗寘锛堢伀灞辨柟鑸燂級API Key <small>锛堝彲閫夛級</small></label>
-      <input id="doubaoKey" type="password" placeholder="鏂硅垷 API Key" autocomplete="off">
-      <input id="doubaoModel" class="model-input" placeholder="妯″瀷 / 鎺ュ叆鐐?ID锛岄粯璁?doubao-seed-1-6-250615" autocomplete="off">
+      <label for="doubaoKey">豆包（火山方舟）API Key <small>（可选）</small></label>
+      <input id="doubaoKey" type="password" placeholder="方舟 API Key" autocomplete="off">
+      <input id="doubaoModel" class="model-input" placeholder="模型 / 接入点 ID，默认 doubao-seed-1-6-250615" autocomplete="off">
     </div>
     <div class="field provider-field">
-      <label for="qwenKey">鍗冮棶锛堥樋閲屼簯鐧剧偧锛堿PI Key <small>锛堝彲閫夛級</small></label>
+      <label for="qwenKey">千问（阿里云百炼）API Key <small>（可选）</small></label>
       <input id="qwenKey" type="password" placeholder="DashScope API Key" autocomplete="off">
-      <input id="qwenModel" class="model-input" placeholder="妯″瀷鍚嶏紝榛樿 qwen-plus" autocomplete="off">
+      <input id="qwenModel" class="model-input" placeholder="模型名，默认 qwen-plus" autocomplete="off">
     </div>
     <div class="field">
-      <label>鍥炵瓟闀垮害</label>
+      <label>回答长度</label>
       <div class="seg" id="modeSeg">
-        <button type="button" data-mode="brief" class="active">绠€娲?/button>
-        <button type="button" data-mode="detail">璇︾粏</button>
+        <button type="button" data-mode="brief" class="active">简洁</button>
+        <button type="button" data-mode="detail">详细</button>
       </div>
     </div>
     <div class="status-box" id="settingsStatus">
-      <span class="pulse"></span><span>姝ｅ湪妫€鏌ヨ繛鎺モ€?/span>
+      <span class="pulse"></span><span>正在检查连接…</span>
     </div>
     <div class="dialog-actions">
-      <button type="button" class="ghost danger" id="btnClear">娓呴櫎鍏ㄩ儴瀵硅瘽</button>
-      <button type="button" class="primary" id="btnSaveSettings">淇濆瓨</button>
+      <button type="button" class="ghost danger" id="btnClear">清除全部对话</button>
+      <button type="button" class="primary" id="btnSaveSettings">保存</button>
     </div>
-    <p class="fine">鍏嶇櫥褰曡嚜娴嬬増銆傜瓟妗堜緵澶囪€冨弬鑰冿紝涓嶆浛浠ｆ寮忔硶寰嬫剰瑙併€?/p>
+    <p class="fine">免登录自测版。答案供备考参考，不替代正式法律意见。</p>
   </form>
 </dialog>
 
 <dialog id="libraryDialog" class="dialog wide">
   <div class="dialog-card">
     <div class="dialog-head">
-      <div><p class="eyebrow">LIBRARY</p><h2>璧勬枡搴?/h2></div>
-      <button class="x" id="btnCloseLibrary" aria-label="鍏抽棴">脳</button>
+      <div><p class="eyebrow">LIBRARY</p><h2>资料库</h2></div>
+      <button class="x" id="btnCloseLibrary" aria-label="关闭">×</button>
     </div>
     <div class="upload-box" id="dropZone">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0 4 4m-4-4L8 8"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
-      <div><strong>涓婁紶璧勬枡锛屼粎鐢ㄤ簬褰撳墠瀵嗙爜/娴忚鍣?/strong><span>鏀寔鏂囧瓧鐗?PDF / TXT / Markdown锛岄檺 3000 椤碉紱涓嶄細骞跺叆鎬荤煡璇嗗簱锛屽叾浠栧瘑鐮佺湅涓嶅埌銆?/span></div>
-      <label class="pick">閫夋嫨鏂囦欢<input id="fileInput" type="file" accept=".pdf,.txt,.md,text/plain,application/pdf" multiple hidden></label>
+      <div><strong>上传资料，仅用于当前密码/浏览器</strong><span>支持文字版 PDF / TXT / Markdown，限 3000 页；不会并入总知识库，其他密码看不到。</span></div>
+      <label class="pick">选择文件<input id="fileInput" type="file" accept=".pdf,.txt,.md,text/plain,application/pdf" multiple hidden></label>
     </div>
     <div class="upload-row">
-      <label>褰掑睘绉戠洰
+      <label>归属科目
         <select id="uploadSubject">
-          <option>鍒戞硶</option><option>姘戞硶</option><option>娉曠悊</option><option>瀹硶</option><option>娉曞埗鍙?/option><option>鍏朵粬</option>
+          <option>刑法</option><option>民法</option><option>法理</option><option>宪法</option><option>法制史</option><option>其他</option>
         </select>
       </label>
       <div class="upload-progress" id="uploadProgress" hidden><span></span></div>
     </div>
-    <h3 class="lib-title">宸蹭笂浼?<small>褰撳墠瀵嗙爜/娴忚鍣?/small></h3>
-    <div class="upload-list" id="uploadList"><p class="empty">杩樻病鏈変笂浼犺祫鏂欍€?/p></div>
+    <h3 class="lib-title">已上传 <small>当前密码/浏览器</small></h3>
+    <div class="upload-list" id="uploadList"><p class="empty">还没有上传资料。</p></div>
   </div>
 </dialog>
 
 <div class="voice-help" id="voiceHelp" hidden>
-  <div class="vh-head"><b>璇煶杈撳叆</b><span>iPhone 缃戦〉璇煶甯稿彈 Safari 闄愬埗</span></div>
-  <p>寤鸿鐩存帴鐐硅緭鍏ユ锛岀敤閿洏鍙充笅瑙掔殑楹﹀厠椋庡惉鍐欙紱涔熷彲浠ユ敼鐢ㄥ畨鍗?Chrome銆備粛鎯冲皾璇曠綉椤佃闊筹紝鍙互鐐逛笅闈㈡寜閽€?/p>
+  <div class="vh-head"><b>语音输入</b><span>iPhone 网页语音常受 Safari 限制</span></div>
+  <p>建议直接点输入框，用键盘右下角的麦克风听写；也可以改用安卓 Chrome。仍想尝试网页语音，可以点下面按钮。</p>
   <div class="vh-actions">
-    <button type="button" id="voiceTry">浠嶈灏濊瘯</button>
-    <button type="button" id="voiceClose">鐢ㄩ敭鐩樺惉鍐?/button>
+    <button type="button" id="voiceTry">仍要尝试</button>
+    <button type="button" id="voiceClose">用键盘听写</button>
   </div>
 </div>
 
 <dialog id="cropDialog" class="dialog crop-dialog">
   <div class="dialog-card">
     <div class="dialog-head">
-      <div><p class="eyebrow">CROP</p><h2>鍓鍥剧墖</h2></div>
-      <button class="x" id="btnCropClose" type="button" aria-label="鍏抽棴">脳</button>
+      <div><p class="eyebrow">CROP</p><h2>剪裁图片</h2></div>
+      <button class="x" id="btnCropClose" type="button" aria-label="关闭">×</button>
     </div>
     <div class="crop-stage" id="cropStage">
-      <img id="cropImg" alt="寰呭壀瑁佸浘鐗?>
+      <img id="cropImg" alt="待剪裁图片">
       <div class="crop-box" id="cropBox"><span class="crop-handle" id="cropHandle"></span></div>
     </div>
-    <p class="fine crop-tip">鎷栧姩閫夋绉诲姩锛屾嫋鍙充笅瑙掕皟鏁村ぇ灏忥紱涔熷彲浠ョ洿鎺ョ敤鍘熷浘銆?/p>
+    <p class="fine crop-tip">拖动选框移动，拖右下角调整大小；也可以直接用原图。</p>
     <div class="dialog-actions">
-      <button type="button" class="ghost" id="btnCropCancel">鍙栨秷</button>
-      <button type="button" class="ghost" id="btnCropFull">鐢ㄥ師鍥?/button>
-      <button type="button" class="primary" id="btnCropApply">鍓骞舵坊鍔?/button>
+      <button type="button" class="ghost" id="btnCropCancel">取消</button>
+      <button type="button" class="ghost" id="btnCropFull">用原图</button>
+      <button type="button" class="primary" id="btnCropApply">剪裁并添加</button>
     </div>
   </div>
 </dialog>
 
 <div class="lightbox" id="lightbox" hidden>
-  <button class="lightbox-close" id="lightboxClose" type="button" aria-label="鍏抽棴">脳</button>
-  <img id="lightboxImg" alt="鏌ョ湅澶у浘">
+  <button class="lightbox-close" id="lightboxClose" type="button" aria-label="关闭">×</button>
+  <img id="lightboxImg" alt="查看大图">
 </div>
 
 <div class="toast" id="toast" role="status"></div>
 <script type="module" src="./app.js?v=22"></script>
 </body>
 </html>
-
