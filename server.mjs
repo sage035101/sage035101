@@ -1712,6 +1712,29 @@ async function handleChat(req, res, owner = '', session = null) {
   const sourceLimit = mode === 'detail' ? 8 : (isMnemonic || isCaseLookup) ? 8 : isSubjectSpecific ? 6 : isComplex ? 6 : 4;
   const searchQuery = isMnemonic ? `${retrievalQuery} 口诀 速记 背诵逻辑` : retrievalQuery;
   const sources = searchQuery && (visionText || !hasImages || searchable.length >= 8) ? search(searchQuery, subject, sourceLimit, owner) : [];
+  // 合同类司法解释直连：检索失败时也保证导入的合同汇编进入上下文
+  if (/合同|司法解释|以物抵债|买卖|借款|租赁|建设工程|担保/.test(effectiveQuery)) {
+    const contractDocs = docs.filter((d) => String(d.source || '').includes('合同类司法解释'));
+    if (contractDocs.length) {
+      const m = effectiveQuery.match(/第\s*(\d{1,3})\s*条/);
+      const cn = (n) => {
+        const d = ['零','一','二','三','四','五','六','七','八','九'];
+        if (n <= 10) return n === 10 ? '十' : d[n];
+        if (n < 20) return '十' + d[n - 10];
+        const t = Math.floor(n / 10), r = n % 10;
+        return d[t] + '十' + (r ? d[r] : '');
+      };
+      const wanted = m ? contractDocs.filter((d) => String(d.text || '').includes('第' + cn(Number(m[1])) + '条')) : [];
+      const extra = wanted.length ? wanted : contractDocs.slice(0, 3);
+      for (const d of extra) {
+        if (sources.some((s) => s.source === d.source && s.page === d.page)) continue;
+        sources.unshift({ n: 1, subject: d.subject, title: titleOf(d), source: d.source, page: d.page, text: d.text, snippet: makeSnippet(d.text, effectiveQuery), score: 99 });
+        if (sources.length >= sourceLimit) break;
+      }
+      sources.splice(sourceLimit);
+      sources.forEach((s, i) => { s.n = i + 1; });
+    }
+  }
   const contextBrief = buildContextBrief(history, query || (visionText ? '（图片中的题目，已识别为上方题干）' : ''));
   const system = buildSystemPrompt({
     subject, mode,
