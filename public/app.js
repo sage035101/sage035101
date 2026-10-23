@@ -957,8 +957,19 @@ async function send(opts = {}) {
     if (state.qwenKey) { headers['x-qwen-key'] = state.qwenKey; headers['x-qwen-model'] = state.qwenModel; }
     if (state.multi) headers['x-multi'] = '1';
     if (editMsg) headers['x-quota-skip'] = '1';
-    const res = await fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify(payload), signal: ac.signal });
+    let res;
+    for (let attempt = 0; attempt < 15; attempt++) {
+      res = await fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify(payload), signal: ac.signal });
+      if (res.status !== 502 && res.status !== 503 && res.status !== 504) break;
+      const tip = state.liveEl?.querySelector('.thinking');
+      if (tip) tip.textContent = `服务正在唤醒（${attempt + 1}/15），请稍等…`;
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, 4000);
+        ac.signal.addEventListener('abort', () => { clearTimeout(timer); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); }, { once: true });
+      });
+    }
     if (!res.ok) {
+      if (res.status === 502 || res.status === 503 || res.status === 504) throw new Error('服务正在唤醒，请等 10 秒再点“重试”。');
       const j = await res.json().catch(() => ({}));
       if (res.status === 401) { location.href = '/login?kicked=1'; }
       if (res.status === 403 && typeof j.error === 'string' && /次数|额度|作废/.test(j.error)) {
