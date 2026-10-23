@@ -565,7 +565,7 @@ function loginPage() {
   </style></head><body><main class="card"><img src="/logo.png" alt="Sage"><h1>Sage 答疑服务</h1><p>站长输入总密码，访客输入 6 位答疑密码</p><form id="f"><input id="p" type="password" autocomplete="current-password" placeholder="站长密码或 6 位答疑密码" autofocus><button id="b" type="submit">进入</button><div class="err" id="e"></div></form><div class="fine">仅限本人及获授权的人使用<br>请勿把密码和链接转发到公开群</div></main><script>
   const f=document.querySelector('#f'),p=document.querySelector('#p'),b=document.querySelector('#b'),e=document.querySelector('#e');
   if(new URLSearchParams(location.search).get('kicked')) e.textContent='该密码已在另一台设备登录，本设备已退出';
-  f.addEventListener('submit',async(ev)=>{ev.preventDefault();e.textContent='';b.disabled=true;try{const r=await fetch('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:p.value})});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'密码不正确');location.href='/'}catch(err){e.textContent=err.message||'密码不正确';b.disabled=false;p.select()}});
+  f.addEventListener('submit',async(ev)=>{ev.preventDefault();e.textContent='';b.disabled=true;try{let r;for(let i=0;i<15;i++){r=await fetch('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:p.value})});if(r.status!==502&&r.status!==503&&r.status!==504)break;e.textContent='服务正在唤醒，请稍等…';await new Promise(x=>setTimeout(x,4000))}const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'密码不正确');location.href='/'}catch(err){e.textContent=err.message||'密码不正确';b.disabled=false;p.select()}});
   </script></body></html>`;
 }
 
@@ -1384,15 +1384,16 @@ async function extractImageQuestion(auth, images) {
   if (!Array.isArray(images) || !images.length) return { text: '', usage: null };
   const blocks = [{
     type: 'text',
-    text: `你是严谨的法硕题目 OCR。只提取图片中的题目，不要解答、不要分析、不要补充图片没有的内容。
-按下面格式逐字输出：
-【题干】……
-【选项】A. …… B. ……（有选项才写）
-【问题】……
-要求：
-1. 数字、年份、主体、行为、结果、否定词必须准确；看不清的字写〔不清〕，不要猜。
-2. 图片里有多道题时，按题号分开。
-3. 不要输出“答案是”“解析”等图片中没有的内容。`,
+    text: `你是严谨的图片逐字转录器，不是答题器。不要解答、不要分析、不要补全图片没有的内容。
+先判断图片类型，再按对应格式输出：
+A. 表格/名单/时间线：输出 Markdown 表格，严格保留原始行、列、顺序和表头；一行一条记录，不合并单元格，不改写、不归类、不补全。看不懂的字写〔不清〕。
+B. 题目：按题号逐字输出题干、选项、问题；不要输出答案或解析。
+C. 其他：按原始阅读顺序逐行转录，保留编号、朝代、人名、年份、专有名词。
+通用要求：
+1. 数字、年份、人名、朝代、主体、行为、结果、否定词逐字核对，不确定就写〔不清〕，不要猜。
+2. 表格不要写成一段话，不要改变行的先后顺序，不要为了通顺改写原句。
+3. 图片模糊或文字太小，明确写“图片看不清”，不要编。
+4. 只输出图片中能看到的内容。`,
   }];
   for (const dataUrl of images.slice(0, 5)) {
     const mm = /^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl));
@@ -1409,9 +1410,9 @@ async function extractImageQuestion(auth, images) {
         headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', ...auth },
         body: JSON.stringify({
           model: MODEL,
-          max_tokens: 3000,
+          max_tokens: 4500,
           temperature: 0,
-          system: '你是题目识别器，只做逐字转录，不回答问题。',
+          system: '你是图片逐字转录器，只做 OCR，不回答问题；表格必须保留行列顺序。',
           messages: [{ role: 'user', content: blocks }],
           output_config: { effort: 'low' },
           stream: false,
