@@ -12,6 +12,7 @@ const DATA = path.join(ROOT, 'data');
 const KB_FILE = path.join(DATA, 'kb.jsonl');
 const WRITING_FILE = path.join(DATA, 'writing_method.jsonl');
 const JINGJIANG_FILES = [1, 2, 3].map((i) => path.join(DATA, `jingjiang_${String(i).padStart(2, '0')}.jsonl`));
+const CONTRACT_FILE = path.join(DATA, 'contract_interpretations.jsonl');
 const COURSE_FILES = fs.readdirSync(DATA).filter((f) => /^(minfa|xiezuo|beisong)_asr_\d+\.jsonl$/.test(f)).sort().map((f) => path.join(DATA, f));
 const UPLOAD_FILE = path.join(DATA, 'uploads.jsonl');
 const GUEST_FILE = process.env.GUEST_CODES_FILE || path.join(DATA, 'guest_codes.json');
@@ -906,6 +907,7 @@ function sourceWeight(doc, query) {
   if (doc.source.includes('刑法案例方法')) w += /案例|行为|拆解|分析|几个行为|写作/.test(query) ? 0.6 : 0.1;
   if (doc.source.includes('2027精讲一本通')) w += /刑法|案例|行为|构成|犯罪|罪数/.test(query) ? 0.2 : 0.05;
   if (doc.source.includes('2027背诵一本通')) w += /逻辑|思路|展开|背诵|要件|例外|刑法/.test(query) ? 0.3 : 0.1;
+  if (doc.source.includes('合同类司法解释')) w += /合同|司法解释|民法|买卖|借款|租赁|建设|担保/.test(query) ? 0.4 : 0.1;
   if (mnemonic && /口诀|速记|背诵逻辑|记忆方法|顺口溜/.test(doc.text || '')) w += 0.28;
   if (doc.source.includes('司法解释')) w += /司法解释|法释|条文|解释/.test(query) ? 0.22 : -0.12;
   if (doc.source.includes('官方索引')) w -= 0.05;
@@ -917,7 +919,7 @@ function sourceWeight(doc, query) {
 }
 
 function rebuildIndex() {
-  docs = [...readJsonl(KB_FILE), ...readJsonl(WRITING_FILE), ...JINGJIANG_FILES.flatMap((f) => readJsonl(f)), ...COURSE_FILES.flatMap((f) => readJsonl(f)), ...readJsonl(UPLOAD_FILE)];
+  docs = [...readJsonl(KB_FILE), ...readJsonl(WRITING_FILE), ...JINGJIANG_FILES.flatMap((f) => readJsonl(f)), ...COURSE_FILES.flatMap((f) => readJsonl(f)), ...readJsonl(CONTRACT_FILE), ...readJsonl(UPLOAD_FILE)];
   for (let i = 0; i < docs.length; i++) docs[i]._id = i;
   postings = new Map();
   docLens = new Array(docs.length);
@@ -1283,6 +1285,7 @@ function buildSystemPrompt({ subject, mode, sources, contextBrief, sourceChars =
 7. 当前备考周期为 2027 法硕；法律依据以现行有效规范为准。真题只有确有把握时才写明年份题号。
 8. 回答中不要出现具体老师姓名；需要指代时用“教材”“课程”“通说”。
 9. 长案例、多小问：先用 1—3 行分别给出每个小问的结论，再展开理由；正文必须尽早出现，不要把全部内容压在思考里。若输出额度紧张，优先保证每个小问都有结论和核心依据。
+10. 默认言简意赅、通俗易懂：先给结论，再分点说理由；能用短句就不用长段；专业术语第一次出现时用一句白话解释；简单问题控制在 300—600 字，复杂案例按“行为/争点/结论”分点展开，不堆砌学术黑话。
 
 【本轮信息】
 当前科目倾向：${eff}
