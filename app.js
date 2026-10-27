@@ -959,13 +959,13 @@ async function send(opts = {}) {
     if (state.multi) headers['x-multi'] = '1';
     if (editMsg) headers['x-quota-skip'] = '1';
     let res;
-    for (let attempt = 0; attempt < 15; attempt++) {
+    for (let attempt = 0; attempt < 30; attempt++) {
       res = await fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify(payload), signal: ac.signal });
       if (res.status !== 502 && res.status !== 503 && res.status !== 504) break;
       const tip = state.liveEl?.querySelector('.thinking');
-      if (tip) tip.textContent = `服务正在唤醒（${attempt + 1}/15），请稍等…`;
+      if (tip) tip.textContent = `服务正在唤醒（${attempt + 1}/30，最多约 2 分钟），请稍等…`;
       await new Promise((resolve, reject) => {
-        const timer = setTimeout(resolve, 4000);
+        const timer = setTimeout(resolve, 5000);
         ac.signal.addEventListener('abort', () => { clearTimeout(timer); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); }, { once: true });
       });
     }
