@@ -108,10 +108,11 @@ function loadStore() {
 function snapshot(stripHeavy = false) {
   return state.conversations.slice(0, 50).map((c) => {
     const total = c.messages.length;
-    const messages = c.messages.slice(-40).map((m, i) => ({
+    const messages = c.messages.slice(-60).map((m, i) => ({
       id: m.id, role: m.role, text: m.text,
       sources: stripHeavy ? [] : (i >= total - 8 ? (m.sources || []).slice(0, 10) : []),
       thumbs: stripHeavy ? [] : (i >= total - 4 ? (m.thumbs || []) : []),
+      imageText: m.imageText || '',
       error: !!m.error, stopped: !!m.stopped, ts: m.ts,
     }));
     return { id: c.id, title: c.title, createdAt: c.createdAt, updatedAt: c.updatedAt, archived: c.archived, messages };
@@ -933,7 +934,7 @@ async function send(opts = {}) {
     mode: state.mode,
     messages: state.messages
       .filter((m) => m.id !== aiMsg.id && !m.error && (m.role === 'user' || m.text))
-      .map((m) => ({ id: m.id, role: m.role, content: m.text, images: m.id === userMsg.id ? imgs : [] })),
+      .map((m) => ({ id: m.id, role: m.role, content: m.imageText ? `${m.text || ''}\n【上文图片识别】${m.imageText}` : m.text, images: m.id === userMsg.id ? imgs : [] })),
   };
 
   const ac = new AbortController();
@@ -958,13 +959,13 @@ async function send(opts = {}) {
     if (state.multi) headers['x-multi'] = '1';
     if (editMsg) headers['x-quota-skip'] = '1';
     let res;
-    for (let attempt = 0; attempt < 15; attempt++) {
+    for (let attempt = 0; attempt < 20; attempt++) {
       res = await fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify(payload), signal: ac.signal });
       if (res.status !== 502 && res.status !== 503 && res.status !== 504) break;
       const tip = state.liveEl?.querySelector('.thinking');
-      if (tip) tip.textContent = `服务正在唤醒（${attempt + 1}/15），请稍等…`;
+      if (tip) tip.textContent = `服务正在唤醒（${attempt + 1}/20，约 1 分钟），请稍等…`;
       await new Promise((resolve, reject) => {
-        const timer = setTimeout(resolve, 4000);
+        const timer = setTimeout(resolve, 3000);
         ac.signal.addEventListener('abort', () => { clearTimeout(timer); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); }, { once: true });
       });
     }
@@ -1000,6 +1001,10 @@ async function send(opts = {}) {
         if (ev === 'meta') {
           aiMsg.sources = data.sources || [];
           aiMsg.peers = Array.isArray(data.peers) ? data.peers : [];
+          if (data.imageText) {
+            userMsg.imageText = String(data.imageText || '');
+            saveState();
+          }
           if (Object.prototype.hasOwnProperty.call(data, 'quota')) {
             state.quota = data.quota;
             renderQuota();
@@ -1314,8 +1319,7 @@ async function loadSession() {
     renderQuota();
   } catch { /* network error: leave UI as-is */ }
 }
-async function checkHealth() {
-  const status = $('#status');
+async function checkHealth() {  const status = $('#status');
   const txt = $('#statusText');
   const box = $('#settingsStatus');
   try {
@@ -1511,6 +1515,18 @@ input.addEventListener('focus', () => setTimeout(syncViewport, 350));
 input.addEventListener('blur', () => setTimeout(syncViewport, 150));
 syncViewport();
 
+function prewarmServer() {
+  let n = 0;
+  const tick = async () => {
+    try {
+      const r = await fetch('/api/health', { cache: 'no-store' });
+      if (r.ok) return;
+    } catch {}
+    if (++n < 20) setTimeout(tick, 3000);
+  };
+  setTimeout(tick, 300);
+}
+
 /* ---------------- init ---------------- */
 loadStore();
 renderHistory();
@@ -1519,6 +1535,7 @@ renderMessages();
 renderAttachments();
 $$('#subjectBar button').forEach((b) => b.classList.toggle('active', b.dataset.subject === state.subject));
 if (!state.messages.length) setTimeout(() => input.focus(), 200);
+prewarmServer();
 loadSession();
 checkHealth();
 setInterval(checkHealth, 60000);
