@@ -678,7 +678,20 @@ function mergeHistory(convId, incoming) {
     byText.add(tk);
     out.push({ ...m, content });
   }
-  return out.slice(-40);
+  return out.slice(-60);
+}
+
+function selectHistory(history, maxChars = 45000) {
+  const out = [];
+  let chars = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    const len = String(m?.content || '').length + (Array.isArray(m?.images) ? m.images.length * 2000 : 0);
+    if (out.length && chars + len > maxChars) break;
+    out.unshift(m);
+    chars += len;
+  }
+  return out;
 }
 
 function rememberTurn(convId, userId, userText, aiId, aiText) {
@@ -689,7 +702,7 @@ function rememberTurn(convId, userId, userText, aiId, aiText) {
     { id: userId || `srv-user-${Date.now()}`, role: 'user', content: userText },
     { id: aiId || `srv-ai-${Date.now()}`, role: 'assistant', content: aiText },
   ]);
-  conversationMemory.set(convId, next.slice(-30));
+  conversationMemory.set(convId, next.slice(-60));
   if (conversationMemory.size > 200) {
     const first = conversationMemory.keys().next().value;
     conversationMemory.delete(first);
@@ -1528,7 +1541,7 @@ async function handleChat(req, res, owner = '', session = null) {
   let body;
   try { body = JSON.parse(await readBody(req)); } catch { return sendJson(res, 400, { error: '请求格式错误' }); }
   const convId = String(body.conversationId || '').slice(0, 80);
-  const incoming = Array.isArray(body.messages) ? body.messages.slice(-40) : [];
+  const incoming = Array.isArray(body.messages) ? body.messages.slice(-60) : [];
   const history = mergeHistory(convId, incoming);
   const subject = SUBJECTS.includes(body.subject) ? body.subject : '全部';
   const mode = body.mode === 'detail' ? 'detail' : 'brief';
@@ -1838,7 +1851,7 @@ async function handleChat(req, res, owner = '', session = null) {
     contextBrief,
     sourceChars: officialDocs.length ? 6000 : contractQuery ? 3200 : mode === 'detail' ? 1400 : isMnemonic ? 1200 : isCaseLookup ? 1100 : isSubjectSpecific ? 850 : isComplex ? 900 : 700,
   });
-  const messages = buildMessages(history.slice(-12));
+  const messages = buildMessages(selectHistory(history, 45000));
   if (!messages.length) return sendJson(res, 400, { error: '没有可发送的消息' });
   if (visionText) {
     const last = messages[messages.length - 1];
