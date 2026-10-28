@@ -108,7 +108,7 @@ function loadStore() {
 function snapshot(stripHeavy = false) {
   return state.conversations.slice(0, 50).map((c) => {
     const total = c.messages.length;
-    const messages = c.messages.slice(-40).map((m, i) => ({
+    const messages = c.messages.slice(-60).map((m, i) => ({
       id: m.id, role: m.role, text: m.text,
       sources: stripHeavy ? [] : (i >= total - 8 ? (m.sources || []).slice(0, 10) : []),
       thumbs: stripHeavy ? [] : (i >= total - 4 ? (m.thumbs || []) : []),
