@@ -188,6 +188,7 @@ function defaultUsage() {
     guest: { cost: 0, questions: 0, historicalCost: 0, historicalQuestions: 0 },
     master: { cost: 0, questions: 0, historicalCost: 0, historicalQuestions: 0 },
     self: { cost: 0, questions: 0 },
+    audit: { logins: [], questions: [] },
     updatedAt: Date.now(),
   };
 }
@@ -208,6 +209,10 @@ function sanitizeUsage(input) {
     if (input.self && typeof input.self === 'object') {
       out.self.cost = num(input.self.cost);
       out.self.questions = Math.floor(num(input.self.questions));
+    }
+    if (input.audit && typeof input.audit === 'object') {
+      out.audit.logins = Array.isArray(input.audit.logins) ? input.audit.logins.slice(-1000) : [];
+      out.audit.questions = Array.isArray(input.audit.questions) ? input.audit.questions.slice(-1000) : [];
     }
     out.updatedAt = num(input.updatedAt) || Date.now();
   }
@@ -270,6 +275,35 @@ function saveUsage() {
     .then(() => remoteSetUsage(payload))
     .catch((e) => console.error('save usage remote', e.message));
   return usageQueue;
+}
+
+const AUDIT_TTL = 7 * 24 * 60 * 60 * 1000;
+function pruneAudit() {
+  const cutoff = nowMs() - AUDIT_TTL;
+  if (!usageStats.audit) usageStats.audit = { logins: [], questions: [] };
+  usageStats.audit.logins = (usageStats.audit.logins || []).filter((x) => Number(x.at) >= cutoff).slice(-500);
+  usageStats.audit.questions = (usageStats.audit.questions || []).filter((x) => Number(x.at) >= cutoff).slice(-500);
+}
+function auditTime(at) {
+  try {
+    return new Date(Number(at)).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+  } catch { return new Date(Number(at)).toISOString(); }
+}
+async function recordMasterLogin(req) {
+  pruneAudit();
+  usageStats.audit.logins.push({
+    at: nowMs(),
+    ip: clientIp(req).slice(0, 80),
+    ua: String(req.headers['user-agent'] || '').slice(0, 160),
+  });
+  await saveUsage();
+}
+async function recordMasterQuestion(text, subject) {
+  pruneAudit();
+  const q = String(text || '').trim();
+  if (!q) return;
+  usageStats.audit.questions.push({ at: nowMs(), subject: String(subject || '全部'), text: q.slice(0, 4000) });
+  await saveUsage();
 }
 function backfillUsage() {
   if (usageStats.initialized) return;
@@ -1556,9 +1590,11 @@ async function handleChat(req, res, owner = '', session = null) {
   const isManageExport = manageCmd === '/manage导出';
   const isUsageQuery = manageCmd === '/查询用量';
   const isMasterUsageQuery = manageCmd === '/站长查询用量';
+  const isSecretLoginQuery = manageCmd === '/绝密查询';
+  const isSecretLogQuery = manageCmd === '/绝密日志';
   const isSetMasterHistory = manageCmd.startsWith('/设置历史站长用量');
   const isMasterViewCode = /^\d{6}$/.test(manageCmd) && session?.role === 'master';
-  if (manageCmd === '/manage' || manageCmd === '/manage1' || isTempCode || isManageDelete || isManageImport || isManageExport || isUsageQuery || isMasterUsageQuery || isSetMasterHistory || isMasterViewCode) {
+  if (manageCmd === '/manage' || manageCmd === '/manage1' || isTempCode || isManageDelete || isManageImport || isManageExport || isUsageQuery || isMasterUsageQuery || isSecretLoginQuery || isSecretLogQuery || isSetMasterHistory || isMasterViewCode) {
     res.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache, no-transform',
@@ -1578,6 +1614,20 @@ async function handleChat(req, res, owner = '', session = null) {
           : isUsageQuery || isMasterUsageQuery || isSetMasterHistory
             ? '只有站长密码登录后，才能查询或设置用量。'
             : '只有站长密码登录后，才能生成新的答疑密码。';
+    } else if (isSecretLoginQuery) {
+      pruneAudit();
+      const list = (usageStats.audit.logins || []).slice().sort((a, b) => Number(b.at) - Number(a.at));
+      answer = list.length
+        ? `最近 7 天站长密码登录记录（共 ${list.length} 次）\n\n` + list.map((x, i) =>
+          `${i + 1}. ${auditTime(x.at)}\nIP：${x.ip || '未知'}\n设备：${x.ua || '未知'}`).join('\n\n')
+        : '最近 7 天没有站长密码登录记录。';
+    } else if (isSecretLogQuery) {
+      pruneAudit();
+      const list = (usageStats.audit.questions || []).slice().sort((a, b) => Number(b.at) - Number(a.at));
+      answer = list.length
+        ? `最近 7 天站长提问日志（共 ${list.length} 条）\n\n` + list.map((x, i) =>
+          `${i + 1}. ${auditTime(x.at)} · ${x.subject || '全部'}\n${x.text}`).join('\n\n')
+        : '最近 7 天没有站长提问记录。';
     } else if (isManageDelete) {
       const code = manageCmd.match(/^\/manage删除\s*[+＋]?\s*(\d{6})$/)[1];
       const rec = guestCodes.get(code);
@@ -1775,6 +1825,9 @@ async function handleChat(req, res, owner = '', session = null) {
   if (vision.usage) recordUsage(session?.role || 'guest', usagePayer, vision.usage, session?.role === 'guest' ? session.code : '');
   const visionText = vision.text;
   const effectiveQuery = query || visionText;
+  if (session?.role === 'master' && effectiveQuery && !manageCmd.startsWith('/') && manageCmd !== '临时111') {
+    await recordMasterQuestion(effectiveQuery, subject);
+  }
   // 只抓取官网链接；不访问用户给出的非官方网站
   const officialDocs = [];
   const officialUrls = [...new Set((String(effectiveQuery).match(/https?:\/\/[^\s<>"'）)]+/g) || [])
@@ -2172,6 +2225,7 @@ const server = http.createServer(async (req, res) => {
       if (passwordOk(input)) {
         trimMasterSessions(5);
         createSession(req, res, { role: 'master' });
+        await recordMasterLogin(req);
         return sendJson(res, 200, { ok: true, role: 'master', quota: null });
       }
       if (/^\d{6}$/.test(input) && guestCodes.has(input)) {
