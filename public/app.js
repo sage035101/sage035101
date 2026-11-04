@@ -961,15 +961,18 @@ async function send(opts = {}) {
     let res;
     for (let attempt = 0; attempt < 20; attempt++) {
       res = await fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify(payload), signal: ac.signal });
-      if (res.status !== 502 && res.status !== 503 && res.status !== 504) break;
+      if (res.status !== 502 && res.status !== 503 && res.status !== 504 && res.status !== 429) break;
       const tip = state.liveEl?.querySelector('.thinking');
-      if (tip) tip.textContent = `服务正在唤醒（${attempt + 1}/20，约 1 分钟），请稍等…`;
+      if (tip) tip.textContent = res.status === 429
+        ? `服务繁忙/网关限流（${attempt + 1}/20），请稍等…`
+        : `服务正在唤醒（${attempt + 1}/20，约 1 分钟），请稍等…`;
       await new Promise((resolve, reject) => {
-        const timer = setTimeout(resolve, 3000);
+        const timer = setTimeout(resolve, res.status === 429 ? 5000 : 3000);
         ac.signal.addEventListener('abort', () => { clearTimeout(timer); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); }, { once: true });
       });
     }
     if (!res.ok) {
+      if (res.status === 429) throw new Error('服务被网关限流，请等 10 秒再点“重试”。');
       if (res.status === 502 || res.status === 503 || res.status === 504) throw new Error('服务正在唤醒，请等 10 秒再点“重试”。');
       const j = await res.json().catch(() => ({}));
       if (res.status === 401) { location.href = '/login?kicked=1'; }
