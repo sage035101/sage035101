@@ -1521,14 +1521,14 @@ C. 其他：按原始阅读顺序逐行转录，保留编号、朝代、人名�
   if (blocks.length === 1) return { text: '', usage: null };
   for (let attempt = 0; attempt < 2; attempt++) {
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), attempt === 0 ? 30000 : 45000);
+    const timer = setTimeout(() => ac.abort(), attempt === 0 ? 20000 : 25000);
     try {
       const r = await fetch(`${API_BASE.replace(/\/$/, '')}/v1/messages`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', ...auth },
         body: JSON.stringify({
           model: MODEL,
-          max_tokens: 4500,
+          max_tokens: 3000,
           temperature: 0,
           system: '你是图片逐字转录器，只做 OCR，不回答问题；表格必须保留行列顺序。',
           messages: [{ role: 'user', content: blocks }],
