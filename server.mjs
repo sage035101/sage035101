@@ -47,7 +47,6 @@ const HISTORICAL_AVG_COST = Math.max(0, Number(process.env.SAGE_HISTORICAL_AVG_C
 const MASTER_HISTORY_COST = Math.max(0, Number(process.env.SAGE_MASTER_HISTORY_COST) || 0);
 const CODE_BUDGET = process.env.SAGE_CODE_BUDGET === undefined ? 9 : Math.max(0, Number(process.env.SAGE_CODE_BUDGET) || 0);
 const CODE_BUDGET_RESERVE = Math.max(0, Number(process.env.SAGE_CODE_BUDGET_RESERVE) || 0.3);
-const PLUGIN_TOKEN = String(process.env.SAGE_PLUGIN_TOKEN || '').trim();
 let guestCodes = new Map();
 let saveQueue = Promise.resolve();
 let usageStats = defaultUsage();
@@ -1181,78 +1180,6 @@ function authHeaders(req, session = null) {
   return null;
 }
 
-const pluginRate = new Map();
-function pluginAllowed(key) {
-  const now = nowMs();
-  const day = Math.floor(now / 86400000);
-  let rec = pluginRate.get(key);
-  if (!rec || rec.day !== day) rec = { day, dayCount: 0, minute: 0, minuteCount: 0 };
-  const minute = Math.floor(now / 60000);
-  if (rec.minute !== minute) { rec.minute = minute; rec.minuteCount = 0; }
-  if (rec.minuteCount >= 20 || rec.dayCount >= 500) return false;
-  rec.minuteCount++;
-  rec.dayCount++;
-  pluginRate.set(key, rec);
-  if (pluginRate.size > 200) {
-    const first = pluginRate.keys().next().value;
-    pluginRate.delete(first);
-  }
-  return true;
-}
-function pluginTokenOk(req) {
-  if (!PLUGIN_TOKEN) return false;
-  const got = String(req.headers['x-plugin-token'] || '').trim();
-  if (!got) return false;
-  const a = Buffer.from(got);
-  const b = Buffer.from(PLUGIN_TOKEN);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
-async function handlePluginChat(req, res) {
-  if (!PLUGIN_TOKEN) return sendJson(res, 503, { error: '插件接口未配置' });
-  if (!pluginTokenOk(req)) return sendJson(res, 401, { error: '插件 token 无效' });
-  if (!pluginAllowed(clientIp(req))) return sendJson(res, 429, { error: '调用过于频繁，请稍后再试' });
-  let body;
-  try { body = JSON.parse(await readBody(req, 20000)); } catch { return sendJson(res, 400, { error: '请求格式错误' }); }
-  const question = String(body.question || '').trim().slice(0, 2000);
-  if (!question) return sendJson(res, 400, { error: '缺少 question' });
-  const subject = SUBJECTS.includes(body.subject) ? body.subject : '全部';
-  const sources = search(question, subject, 6);
-  const system = buildSystemPrompt({ subject, mode: 'brief', query: question, sources, contextBrief: '', sourceChars: 1800 });
-  const auth = authHeaders(req, { role: 'master' });
-  if (!auth) return sendJson(res, 503, { error: 'DeepSeek 额度未配置' });
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), 75000);
-  try {
-    const r = await fetch(`${API_BASE.replace(/\/$/, '')}/v1/messages`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', ...auth },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 4096,
-        system,
-        messages: [{ role: 'user', content: [{ type: 'text', text: question }] }],
-        temperature: 0.2,
-        output_config: { effort: 'medium' },
-        stream: false,
-      }),
-      signal: ac.signal,
-    });
-    if (!r.ok) return sendJson(res, 502, { error: 'Sage 上游回答失败' });
-    const j = await r.json();
-    const answer = (j.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
-    if (!answer) return sendJson(res, 502, { error: 'Sage 没有返回有效答案' });
-    return sendJson(res, 200, {
-      answer,
-      subject: subject === '全部' ? '自动判断' : subject,
-      sources: sources.slice(0, 6).map((s) => ({ title: s.title, source: s.source, page: s.page })),
-    });
-  } catch (e) {
-    return sendJson(res, 504, { error: e.name === 'AbortError' ? 'Sage 回答超时' : 'Sage 接口异常' });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 function peerConfig(req) {
   const multi = String(req.headers['x-multi'] || '') === '1';
   const model = (v, fallback) => {
@@ -2377,10 +2304,6 @@ const server = http.createServer(async (req, res) => {
         ok: true, role: session.role, quota: session.role === 'guest' ? guestQuota(session) : null,
         usesOwnerKey: session.role === 'guest' ? (guestCodes.get(session.code)?.usesOwnerKey ?? session.usesOwnerKey ?? true) : null,
       });
-    }
-
-    if (p === '/api/plugin/chat' && req.method === 'POST') {
-      return await handlePluginChat(req, res);
     }
 
     const info = sessionInfo(req);
