@@ -1944,6 +1944,10 @@ async function handleChat(req, res, owner = '', session = null) {
     if (res.writableEnded) return;
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
+  const heartbeat = setInterval(() => {
+    if (!res.writableEnded) res.write(': heartbeat\n\n');
+  }, 10000);
+  res.on('close', () => clearInterval(heartbeat));
   const cacheLookup = !hasImages && !!query;
   const cacheKey = cacheLookup ? `${subject}|${mode}|${canonicalQuestion(query)}` : '';
   const cacheStore = cacheLookup && history.length <= 1 && sources.length > 0 && !docs.some((d) => d.uploaded && (d.owner || '') === owner);
@@ -2032,6 +2036,8 @@ async function handleChat(req, res, owner = '', session = null) {
   let fullText = '';
   let thinkingChars = 0;
   let thinkingSent = 0;
+  let messageStop = false;
+  let stopReason = '';
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -2061,6 +2067,9 @@ async function handleChat(req, res, owner = '', session = null) {
           }
         } else if (event === 'message_delta' && data.usage) {
           streamUsage = data.usage;
+          if (data.delta?.stop_reason) stopReason = data.delta.stop_reason;
+        } else if (event === 'message_stop') {
+          messageStop = true;
         } else if (event === 'error') {
           send('error', { message: data.error?.message || '生成中断' });
         }
@@ -2068,7 +2077,15 @@ async function handleChat(req, res, owner = '', session = null) {
     }
   } catch (e) {
     await refundQuota();
+    clearInterval(heartbeat);
     if (!closed) send('error', { message: '生成中断，本次不扣次数，请重试。' });
+  }
+  if (!closed && fullText.trim() && !messageStop && !stopReason) {
+    recordUsage(session?.role || 'guest', usagePayer, streamUsage, session?.role === 'guest' ? session.code : '');
+    clearInterval(heartbeat);
+    send('error', { message: '连接被网关中断，回答未完成，已保留前半段。请点“重试”重新生成。', partial: true });
+    res.end();
+    return;
   }
   if (!closed) {
     let checked = fullText
