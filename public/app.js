@@ -987,6 +987,7 @@ async function send(opts = {}) {
     const decoder = new TextDecoder();
     let buf = '';
     let done = false;
+    let gotFinal = false;
     while (!done) {
       const { done: d, value } = await reader.read();
       if (d) break;
@@ -1046,6 +1047,7 @@ async function send(opts = {}) {
         }
         if (ev === 'final' && typeof data.text === 'string') {
           aiMsg.text = data.text;
+          gotFinal = true;
           scheduleRender();
           continue;
         }
@@ -1053,13 +1055,22 @@ async function send(opts = {}) {
         if (ev === 'done') { done = true; break; }
       }
     }
+    if (!gotFinal) {
+      const partial = aiMsg.text || '';
+      aiMsg.error = true;
+      aiMsg.text = partial
+        ? `${partial}\n\n〔回答未完成：连接被网关中断，已保留前半段。请点“重试”重新生成。〕`
+        : '连接中断，没有收到完整回答。请点“重试”。';
+    }
   } catch (e) {
     if (e.name === 'AbortError') {
       aiMsg.stopped = true;
       if (!aiMsg.text) aiMsg.text = '已停止生成。';
     } else {
+      const partial = aiMsg.text || '';
       aiMsg.error = true;
-      aiMsg.text = e.message || '网络异常，请重试。';
+      const msg = e.message || '网络异常，请重试。';
+      aiMsg.text = partial ? `${partial}\n\n〔回答未完成：${msg}〕` : msg;
     }
   } finally {
     setStreaming(false);
