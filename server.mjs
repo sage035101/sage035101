@@ -15,7 +15,11 @@ const JINGJIANG_FILES = [1, 2, 3].map((i) => path.join(DATA, `jingjiang_${String
 const CONTRACT_FILE = path.join(DATA, 'contract_interpretations.jsonl');
 const CONTRACT_GENERAL_FILE = path.join(DATA, 'contract_general_full.jsonl');
 const CIVIL_FILE = path.join(DATA, 'civil_interpretations.jsonl');
-const COURSE_FILES = fs.readdirSync(DATA).filter((f) => /^(minfa|xiezuo|beisong)_asr_\d+\.jsonl$/.test(f)).sort().map((f) => path.join(DATA, f));
+const SKIP_MINFA_ASR = process.env.SAGE_SKIP_MINFA_ASR !== '0';
+const COURSE_FILES = fs.readdirSync(DATA)
+  .filter((f) => /^(minfa|xiezuo|beisong)_asr_\d+\.jsonl$/.test(f))
+  .filter((f) => !(SKIP_MINFA_ASR && f.startsWith('minfa_asr_')))
+  .sort().map((f) => path.join(DATA, f));
 const UPLOAD_FILE = path.join(DATA, 'uploads.jsonl');
 const GUEST_FILE = process.env.GUEST_CODES_FILE || path.join(DATA, 'guest_codes.json');
 const GUEST_BAK = GUEST_FILE + '.bak';
