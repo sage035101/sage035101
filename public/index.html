@@ -6,13 +6,15 @@
 <meta name="theme-color" content="#f6f2e9">
 <title>Sage · 答疑服务</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23436554'/%3E%3Ctext x='32' y='44' font-size='36' text-anchor='middle' fill='%23f6f2e9' font-family='serif'%3E%E6%B3%95%3C/text%3E%3C/svg%3E">
+<link rel="preload" as="image" href="./logo-optimized.webp" type="image/webp" fetchpriority="high">
+<link rel="preload" as="image" href="./logo-mark-optimized.webp" type="image/webp" fetchpriority="high">
 <link rel="stylesheet" href="./styles.css?v=21">
 </head>
 <body>
 <header class="topbar">
   <div class="brand">
     <span class="brand-seal" id="brandSeal">
-      <img id="brandLogo" src="./logo-mark.png" alt="Sage" onload="this.parentElement.classList.add('has-logo')" onerror="this.style.display='none';this.parentElement.classList.remove('has-logo')">
+      <img id="brandLogo" src="./logo-mark-optimized.webp" width="44" height="44" decoding="async" fetchpriority="high" alt="Sage" onload="this.parentElement.classList.add('has-logo')" onerror="this.style.display='none';this.parentElement.classList.remove('has-logo')">
       <span class="logo-fallback">法</span>
     </span>
     <div class="brand-text">
@@ -86,7 +88,7 @@
     <div class="chat" id="chat">
       <section class="welcome" id="welcome">
         <div class="welcome-mark" id="welcomeSeal">
-          <img id="welcomeLogo" src="./logo.png" alt="Sage" onload="this.parentElement.classList.add('has-logo')" onerror="this.style.display='none';this.parentElement.classList.remove('has-logo')">
+          <img id="welcomeLogo" src="./logo-optimized.webp" width="132" height="132" decoding="async" fetchpriority="high" alt="Sage" onload="this.parentElement.classList.add('has-logo')" onerror="this.style.display='none';this.parentElement.classList.remove('has-logo')">
           <span class="logo-fallback">法</span>
         </div>
         <p class="eyebrow">SAGE · 答疑服务</p>
@@ -277,6 +279,6 @@
 </div>
 
 <div class="toast" id="toast" role="status"></div>
-<script type="module" src="./app.js?v=28"></script>
+<script type="module" src="./app.js?v=29"></script>
 </body>
 </html>
