@@ -15,6 +15,7 @@ const JINGJIANG_FILES = [1, 2, 3].map((i) => path.join(DATA, `jingjiang_${String
 const CONTRACT_FILE = path.join(DATA, 'contract_interpretations.jsonl');
 const CONTRACT_GENERAL_FILE = path.join(DATA, 'contract_general_full.jsonl');
 const CIVIL_FILE = path.join(DATA, 'civil_interpretations.jsonl');
+const NEW_REFS_FILE = path.join(DATA, 'new_refs.jsonl');
 const SKIP_MINFA_ASR = process.env.SAGE_SKIP_MINFA_ASR !== '0';
 const COURSE_FILES = fs.readdirSync(DATA)
   .filter((f) => /^(minfa|xiezuo|beisong)_asr_\d+\.jsonl$/.test(f))
@@ -1012,6 +1013,9 @@ async function retryForEmpty({ system, messages, auth }) {
 function sourceWeight(doc, query) {
   let w = 1;
   const mnemonic = /口诀|记忆|背诵|带背|视频|课程|逻辑|方法/.test(query);
+  if (doc.priority === 1) w += 0.6;
+  if (doc.source.includes('法理学-带写')) w += /带写|答题|框架|思路|怎么写|答题模板|法理/.test(query) ? 0.45 : 0.25;
+  if (doc.source.includes('新参考')) w += 0.25;
   if (doc.source.includes('考试分析')) w += 0.45;
   if (doc.source.includes('精讲一本通')) w += mnemonic ? 0.22 : 0.12;
   if (doc.source.includes('背诵一本通')) w += mnemonic ? 0.3 : 0.1;
@@ -1037,7 +1041,7 @@ function sourceWeight(doc, query) {
 }
 
 function rebuildIndex() {
-  docs = [...readJsonl(KB_FILE), ...readJsonl(WRITING_FILE), ...JINGJIANG_FILES.flatMap((f) => readJsonl(f)), ...COURSE_FILES.flatMap((f) => readJsonl(f)), ...readJsonl(CONTRACT_GENERAL_FILE), ...readJsonl(CIVIL_FILE), ...readJsonl(UPLOAD_FILE)];
+  docs = [...readJsonl(KB_FILE), ...readJsonl(WRITING_FILE), ...JINGJIANG_FILES.flatMap((f) => readJsonl(f)), ...COURSE_FILES.flatMap((f) => readJsonl(f)), ...readJsonl(CONTRACT_GENERAL_FILE), ...readJsonl(CIVIL_FILE), ...readJsonl(NEW_REFS_FILE), ...readJsonl(UPLOAD_FILE)];
   for (let i = 0; i < docs.length; i++) docs[i]._id = i;
   postings = new Map();
   docLens = new Array(docs.length);
@@ -1321,6 +1325,17 @@ function buildSystemPrompt({ subject, mode, sources, contextBrief, sourceChars =
 3. 当前知识库里没有马工程全文，涉及马工程的内容只能按“马工程体系/通行理解”概括，不得编造页码、原文、具体表述；记不清就写“按马工程体系通常……”，不要写成逐字引用。
 4. 能用马工程讲清“为什么”的，不要只背结论；能用案例说明的，不要只列要件。
 
+【第一梯队新增参考（2026-11）】
+1. 新增四份参考与《2027法硕考试分析》、法硕教材、马工程并列为**第一梯队**，不能排在旧资料之后：
+   - 《刑法学》新参考（刑法）
+   - 《民法学》新参考（民法）
+   - 《法理学》新参考（法理）
+   - 《法理学-带写（答题框架）》（法理主观题）
+2. 这四份资料与旧教材、背诵一本通、课程、司法解释冲突时，先并列说明各自表述和理由，再按法硕应试口径取舍；不得因为旧资料已经存在就忽略新参考。
+3. 法理学主观题（材料分析、论述、法条分析）优先调用《法理学-带写（答题框架）》：按“审题—找考点—搭原理—结合材料—下结论”的框架组织；它给的是答题思路和模板，不是替代知识点。
+4. 新参考的内容也要用于客观题、简答题和案例题；不能只在“带写”类问题里使用。
+5. 不编造新参考的页码、原文、章节号；记不清就写“按新参考的体系……”。
+
 【教材与观点】
 1. 法硕答题的基准顺序是：《2027法硕考试分析》与法硕教材口径 → 法硕精讲/背诵一本通与课程 → 现行法/司法解释补强。不得用《法考》的二阶层、三阶层、法考少数说替换法硕教材的犯罪构成和判断顺序；教材明确采用的观点除外。
 2. 教材存在多种观点时，先给法硕教材主线，再用一小段说明争议与应试取舍；不要把法考通说直接写成法硕通说。
@@ -1332,7 +1347,7 @@ function buildSystemPrompt({ subject, mode, sources, contextBrief, sourceChars =
 
 【材料核对】
 1. 每个核心结论先在【参考材料】中找依据；找不到就用马工程/一般法理把问题讲通，并说明“材料未直接覆盖”，不要把模型记忆冒充教材原文，也不要反复用“材料没有”拒绝作答。
-2. 观点优先级：考试分析/教材与马工程体系**并列**；背诵一本通/课程次之；口诀/个人总结再次。冲突时先并列说明差异，再按法硕应试口径取舍，不把任何一方当成唯一真理。
+2. 观点优先级：考试分析/教材、马工程体系、第一梯队新增参考**并列**；背诵一本通/课程次之；口诀/个人总结再次。冲突时先并列说明差异，再按法硕应试口径取舍，不把任何一方当成唯一真理。
 3. 数字、年份、法条号、案例号、页码没有在材料中出现，不得编造；只写规范名称，不写具体编号。
 4. 作答前自检：结论、构成要件、例外、案例编号是否都有材料支撑；没有支撑就降级表述或标注不确定。
 
@@ -2319,8 +2334,20 @@ const server = http.createServer(async (req, res) => {
       const session = sessionInfo(req);
       const auth = authHeaders(req, session);
       const pages = new Set(docs.map((d) => `${d.source}|${d.page}`)).size;
+      const mem = process.memoryUsage();
       return sendJson(res, 200, {
         ok: !!auth, docs: docs.length, pages, model: MODEL,
+        memory: {
+          rssMB: +(mem.rss / 1024 / 1024).toFixed(1),
+          heapUsedMB: +(mem.heapUsed / 1024 / 1024).toFixed(1),
+          heapTotalMB: +(mem.heapTotal / 1024 / 1024).toFixed(1),
+          externalMB: +(mem.external / 1024 / 1024).toFixed(1),
+          arrayBuffersMB: +(mem.arrayBuffers / 1024 / 1024).toFixed(1),
+        },
+        indexTerms: postings.size,
+        conversationsInMemory: conversationMemory.size,
+        answerCache: answerCache.size,
+        officialPageCache: officialPageCache.size,
         requireUserKey: false, accessGate: !!ACCESS_PASSWORD,
         role: session?.role || null,
         quota: session?.role === 'guest' ? guestQuota(session) : null,
